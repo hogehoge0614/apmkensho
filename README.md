@@ -21,9 +21,10 @@
 11. [New Relic APM で確認する観点](#11-new-relic-apm-で確認する観点)
 12. [New Relic Kubernetes で確認する観点](#12-new-relic-kubernetes-で確認する観点)
 13. [New Relic Logs で確認する観点](#13-new-relic-logs-で確認する観点)
-14. [機能差比較表](#14-機能差比較表)
-15. [PoC 後の削除手順](#15-poc-後の削除手順)
-16. [前提・注意事項](#16-前提注意事項)
+14. [APM 機能有意差の重点確認シナリオ](#14-apm-機能有意差の重点確認シナリオ)
+15. [機能差比較表](#15-機能差比較表)
+16. [PoC 後の削除手順](#16-poc-後の削除手順)
+17. [前提・注意事項](#17-前提注意事項)
 
 ---
 
@@ -390,6 +391,36 @@ https://one.newrelic.com/apm
 - エラーの stack trace 自動取得
 - Logs in Context（ログと APM の自動紐付け）
 
+### APM 特化機能（CW との有意差が出やすい箇所）
+
+**Transaction Traces**
+```
+APM > [service] > Transaction Traces
+```
+- 設定したしきい値（デフォルト Apdex T × 4）を超えた実行を自動キャプチャ
+- Breakdown Table: FastAPI ルート・httpx 呼び出しごとの時間内訳
+- `checkout/slow-payment` 実行後、payment-api スパンがどの関数で遅いかを確認
+
+**Errors Inbox**
+```
+APM > [service] > Errors Inbox
+```
+- stack trace fingerprint でエラーを自動グルーピング（同種エラーをまとめて表示）
+- occurrence count, First seen / Last seen が自動記録
+- Resolved / Ignored / Assigned でステータス管理（チームでのトリアージが可能）
+- `checkout/payment-error` を繰り返し実行してグルーピングを確認
+
+**External Services**
+```
+APM > [service] > External services
+```
+- `external-api-simulator` への呼び出しが呼び出し元サービスごとに内訳表示
+- レスポンスタイムの分布・スループット・エラー率を外部サービス単位で確認
+
+**Apdex**
+- ユーザー体感スコア（0–1）がサービスサマリに常時表示
+- `slow-payment` 実行で Apdex が下がるタイミングを確認（CW には相当機能なし）
+
 ---
 
 ## 12. New Relic Kubernetes で確認する観点
@@ -426,7 +457,104 @@ SINCE 1 hour ago
 
 ---
 
-## 14. 機能差比較表
+## 14. APM 機能有意差の重点確認シナリオ
+
+New Relic は APM ツールに特化しているため、以下のシナリオで CloudWatch との**機能的有意差**が現れやすい。
+同一トラフィックを発生させ、両ツールが何をどこまで見せるかを実機で比較する。
+
+### シナリオ A: エラー分析の深度
+
+**操作**:
+```bash
+for i in $(seq 1 25); do curl -s http://localhost:8080/api/checkout/payment-error > /dev/null; done
+```
+
+| 観点 | CloudWatch (X-Ray) | New Relic (Errors Inbox) |
+|------|-------------------|--------------------------|
+| エラーのグルーピング | なし。個別トレースをフィルタして目視 | stack trace fingerprint で自動グルーピング |
+| stack trace の取得 | スパン属性で部分的 | Python 全 stack trace を自動キャプチャ |
+| 発生回数・初回/最終発生 | 手動で時系列検索 | occurrence count, first/last seen が自動記録 |
+| 担当者アサイン・ステータス管理 | なし | Errors Inbox で Resolved / Ignored / Assigned |
+
+- **CW**: X-Ray > Traces > `Filter: Error = true` で個別トレースを目視
+- **NR**: APM > [payment-api] > Errors Inbox でグルーピング済みエラーを確認
+
+---
+
+### シナリオ B: 遅いトランザクションの自動検出
+
+**操作**:
+```bash
+for i in $(seq 1 30); do curl -s http://localhost:8080/api/checkout/slow-payment > /dev/null; done
+```
+
+| 観点 | CloudWatch (X-Ray) | New Relic (Transaction Traces) |
+|------|-------------------|---------------------------------|
+| 遅い実行の自動キャプチャ | なし。手動で duration フィルタして探す | しきい値超えの実行を Transaction Traces に自動保存 |
+| 内訳の粒度 | HTTP スパン単位 | Breakdown Table で FastAPI ルート・httpx 呼び出しごとの時間 |
+| どこで時間を使ったか | スパン間の空白時間は不明 | 各関数の占有時間をパーセンテージで表示 |
+| しきい値アラート | メトリクス名を特定して CloudWatch Alarm | `percentile(duration, 99) > 2000` をそのままアラート条件に |
+
+- **CW**: X-Ray > Traces > Sort by duration 降順 → 手動で遅いトレースを探す
+- **NR**: APM > [backend-for-frontend] > Transaction Traces > Slowest traces
+
+---
+
+### シナリオ C: Logs in Context の操作性
+
+**操作**: 任意のシナリオで負荷をかけ、トレース詳細画面からログへの到達手順を両ツールで比較する
+
+| 観点 | CloudWatch | New Relic |
+|------|-----------|-----------|
+| トレース → ログへの移動 | trace_id を手動コピー → Logs Insights で検索クエリを書く | トレース詳細の "Logs" タブを1クリック |
+| スパン上にログをマッピング | なし | スパンの時刻範囲内のログをタイムライン上に重ねて表示 |
+| エラーログの APM サマリへの浮上 | なし | エラー件数が APM サービスサマリに自動カウント |
+| ログ → トレースへの逆引き | trace_id でログを検索し X-Ray で再検索（2操作） | ログエントリから "View span in APM" で直接ジャンプ |
+
+確認手順（NR 側）:
+1. APM > [payment-api] > Distributed Tracing でエラートレースを選択
+2. スパンを選択 → "Logs" タブ → そのスパンに紐付いたログが表示されるか確認
+3. NR Logs でログエントリを選択 → "View span in APM" で逆引きナビゲーション
+
+---
+
+### シナリオ D: サービスマップの情報密度
+
+**操作**: `make load` で全シナリオ混在のトラフィックを発生させた状態でサービスマップを比較
+
+| 観点 | CloudWatch App Signals | New Relic APM |
+|------|------------------------|---------------|
+| ノードの情報量 | レイテンシ・エラー率 | Apdex・スループット・エラー率・レイテンシが1ノードに集約 |
+| ユーザー体感スコア | なし | Apdex（0–1 のスコアで劣化が直感的に見える） |
+| 外部サービスの可視性 | external-api-simulator が依存として表示 | External Services ページ: 呼び出し元ごとの response time breakdown |
+
+---
+
+### シナリオ E: アラート定義の柔軟性
+
+同じアラート条件を両ツールで設定し、定義のしやすさを比較する
+
+| 条件例 | CloudWatch | New Relic NRQL アラート |
+|--------|-----------|------------------------|
+| payment-api の p99 レイテンシ > 2 秒 | App Signals メトリクスを特定してアラーム設定 | `SELECT percentile(duration,99) FROM Transaction WHERE appName='payment-api'` |
+| エラー率 5% 超え | X-Ray フィルタグループ + アラーム | `SELECT percentage(count(*), WHERE error IS true) FROM Transaction` |
+| 特定エンドポイントのみ | ディメンション指定が複雑 | `WHERE request.uri LIKE '/pay/%'` を WHERE 句に追加するだけ |
+
+---
+
+### シナリオ F: 自動異常検知の感度
+
+**操作**: `make load`（正常トラフィック）→ `slow-payment` を集中実行 → 自動で異常として検出されるかを確認
+
+| 観点 | CloudWatch | New Relic |
+|------|-----------|-----------|
+| 事前設定 | Anomaly Detection を各アラームに個別設定が必要 | Applied Intelligence (Lookout) が設定不要で全エンティティを横断スキャン |
+| 検出スコープ | 設定済みメトリクスのみ | 全サービスの全シグナル（メトリクス・トレース・ログ）を横断 |
+| 通知の集約 | SNS / CloudWatch Actions をサービスごとに設定 | Workflows + 通知チャネル（Slack 等）で一元管理 |
+
+---
+
+## 15. 機能差比較表
 
 | 機能 | CloudWatch Application Signals | New Relic APM |
 |------|-------------------------------|---------------|
@@ -437,8 +565,13 @@ SINCE 1 hour ago
 | **SLO 管理** | Application Signals SLOs | Service Levels |
 | **K8s メトリクス** | Container Insights | NR Kubernetes |
 | **ログ** | CloudWatch Logs（Fluent Bit） | NR Logs（Fluent Bit） |
-| **Logs in Context** | なし（別途手動連携が必要） | あり（自動） |
-| **エラー分析** | X-Ray エラー | Errors Inbox（AI グルーピング） |
+| **Logs in Context** | なし（trace_id で手動検索が必要） | あり（トレース詳細から1クリック・逆引きも可） |
+| **エラーグルーピング** | なし（個別トレースを目視） | Errors Inbox（stack trace fingerprint で自動グルーピング・ステータス管理） |
+| **遅いトランザクション自動検出** | なし（手動フィルタ） | Transaction Traces（しきい値超えを自動キャプチャ・Breakdown Table） |
+| **ユーザー体感スコア** | なし | Apdex（0–1 スコアがサービスサマリに常時表示） |
+| **アラート条件の柔軟性** | メトリクスアラーム（ディメンション固定） | NRQL で任意のシグナル・フィルタをそのままアラート化 |
+| **自動異常検知** | Anomaly Detection（アラームごとに設定必要） | Applied Intelligence / Lookout（設定不要で全エンティティ横断スキャン） |
+| **外部サービス分析** | スパンで確認 | External Services ページ（呼び出し元ごとの breakdown） |
 | **アラート** | CloudWatch Alarms | NR Alerts + NRQL |
 | **フロントエンド** | CloudWatch RUM | NR Browser |
 | **合成監視** | CloudWatch Synthetics | NR Synthetics |
@@ -448,7 +581,7 @@ SINCE 1 hour ago
 
 ---
 
-## 15. PoC 後の削除手順
+## 16. PoC 後の削除手順
 
 ```bash
 make down
@@ -467,7 +600,7 @@ make destroy-check
 
 ---
 
-## 16. 前提・注意事項
+## 17. 前提・注意事項
 
 - **AWS アカウント**: `AmazonEKSClusterPolicy`, `AmazonEC2ContainerRegistryFullAccess`, `CloudWatchFullAccess`, `AmazonRDSFullAccess`（相当） が必要
 - **New Relic**: Pro 以上のライセンスを推奨（k8s-agents-operator は Full Stack Observability 要）
