@@ -227,12 +227,31 @@ docker version      # >= 24.x
 
 ```bash
 cp .env.example .env
-# 以下を設定:
-# NEW_RELIC_LICENSE_KEY=...   (NR ライセンスキー)
-# NEW_RELIC_ACCOUNT_ID=...    (NR アカウント ID)
-# AWS_REGION=ap-northeast-1
-# CLUSTER_NAME=obs-poc
 ```
+
+**make up 前に設定する項目**:
+
+```bash
+# New Relic (Administration > API keys で取得)
+NEW_RELIC_LICENSE_KEY=...     # INGEST - LICENSE タイプ
+NEW_RELIC_API_KEY=NRAK-...    # USER タイプ（NRAK- で始まる）
+NEW_RELIC_ACCOUNT_ID=...      # アカウント番号
+NEW_RELIC_REGION=US           # one.newrelic.com → US / one.eu.newrelic.com → EU
+
+# AWS
+AWS_REGION=ap-northeast-1
+AWS_ACCOUNT_ID=...            # 12 桁のアカウント番号
+CLUSTER_NAME=obs-poc
+```
+
+**make up 後に terraform output で追記する項目**:
+
+```bash
+echo "CW_RUM_APP_MONITOR_ID=$(terraform -chdir=infra/terraform output -raw rum_app_monitor_id)" >> .env
+echo "CW_RUM_IDENTITY_POOL_ID=$(terraform -chdir=infra/terraform output -raw cognito_identity_pool_id)" >> .env
+```
+
+**SYNTHETICS_CANARY_URL はアプリデプロイ後に設定する**（手順 8 参照）。
 
 ### 手順
 
@@ -240,44 +259,57 @@ cp .env.example .env
 # 1. EKS クラスター・AWS リソース作成（~20 分）
 make up
 
-# 2. K8s secrets 作成
+# 2. terraform output を .env に追記
+echo "CW_RUM_APP_MONITOR_ID=$(terraform -chdir=infra/terraform output -raw rum_app_monitor_id)" >> .env
+echo "CW_RUM_IDENTITY_POOL_ID=$(terraform -chdir=infra/terraform output -raw cognito_identity_pool_id)" >> .env
+
+# 3. K8s secrets 作成
 make create-secrets
 
-# 3. Docker イメージビルド & ECR push
+# 4. Docker イメージビルド & ECR push
 make build-push
 
 # ── CloudWatch path ──────────────────────────────────────────
-# 4. CloudWatch スタックセットアップ（OTel Operator 有効化・アノテーション付与）
+# 5. CloudWatch スタックセットアップ（OTel Operator 有効化・アノテーション付与）
 make install-cloudwatch-full
 
-# 5. アプリデプロイ (EC2 → demo-ec2 namespace)
+# 6. アプリデプロイ (EC2 → demo-ec2 namespace)
 make deploy-ec2
 
-# 6. アプリデプロイ (Fargate → demo-fargate namespace)
+# 7. アプリデプロイ (Fargate → demo-fargate namespace)
 make deploy-fargate
+
+# 8. LoadBalancer hostname を取得して Synthetics Canary を設定
+LB_HOST=$(kubectl get svc frontend-ui -n demo-ec2 \
+  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+source .env
+terraform -chdir=infra/terraform apply -auto-approve \
+  -var="new_relic_license_key=${NEW_RELIC_LICENSE_KEY}" \
+  -var="new_relic_account_id=${NEW_RELIC_ACCOUNT_ID}" \
+  -var="synthetics_canary_url=http://${LB_HOST}"
 
 # UI アクセス: CloudWatch path
 make port-forward-ec2       # -> http://localhost:8080
 make port-forward-fargate   # -> http://localhost:8081
 
 # ── New Relic path ───────────────────────────────────────────
-# 7. New Relic スタックセットアップ（nri-bundle + k8s-agents-operator）
+# 9. New Relic スタックセットアップ（nri-bundle + k8s-agents-operator）
 make install-newrelic-full
 
-# 8. アプリデプロイ (EC2 → demo-newrelic namespace)
+# 10. アプリデプロイ (New Relic path → demo-newrelic namespace)
 make deploy-newrelic
 
 # UI アクセス: New Relic path
 make port-forward-newrelic  # -> http://localhost:8082
 
 # ── 負荷生成・比較 ────────────────────────────────────────────
-# 9. トレース生成
+# 11. トレース生成
 make load
 
-# 10. ステータス確認
+# 12. ステータス確認
 make status
 
-# 11. 比較チェックリスト表示
+# 13. 比較チェックリスト表示
 make compare-check
 ```
 
