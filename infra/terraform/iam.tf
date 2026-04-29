@@ -258,7 +258,7 @@ resource "aws_iam_role_policy" "metric_stream_firehose" {
           "firehose:PutRecord",
           "firehose:PutRecordBatch"
         ]
-        Resource = aws_kinesis_firehose_delivery_stream.newrelic_metrics.arn
+        Resource = var.new_relic_metric_stream_enabled ? aws_kinesis_firehose_delivery_stream.newrelic_metrics[0].arn : "arn:aws:firehose:*:*:deliverystream/placeholder"
       }
     ]
   })
@@ -301,10 +301,10 @@ resource "aws_iam_role_policy" "firehose_s3" {
           "s3:ListBucketMultipartUploads",
           "s3:PutObject"
         ]
-        Resource = [
-          aws_s3_bucket.firehose_backup.arn,
-          "${aws_s3_bucket.firehose_backup.arn}/*"
-        ]
+        Resource = var.new_relic_metric_stream_enabled ? [
+          aws_s3_bucket.firehose_backup[0].arn,
+          "${aws_s3_bucket.firehose_backup[0].arn}/*"
+        ] : ["arn:aws:s3:::placeholder"]
       }
     ]
   })

@@ -3,9 +3,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Target: EC2 or Fargate frontend-ui via port-forward
+# Target: frontend-ui LoadBalancer URL (set EC2_BASE / FARGATE_BASE / NEWRELIC_BASE in .env)
 EC2_BASE="${EC2_BASE:-http://localhost:8080}"
 FARGATE_BASE="${FARGATE_BASE:-http://localhost:8081}"
+NEWRELIC_BASE="${NEWRELIC_BASE:-}"
 ROUNDS="${ROUNDS:-3}"
 DELAY="${DELAY:-2}"
 
@@ -75,7 +76,16 @@ for round in $(seq 1 "${ROUNDS}"); do
     run_requests "${FARGATE_BASE}" "Fargate"
   else
     echo "  [SKIP] Fargate frontend not reachable at ${FARGATE_BASE}"
-    echo "  Run 'make port-forward-fargate' in another terminal first"
+    echo "  Set FARGATE_BASE in .env to the LoadBalancer hostname"
+  fi
+
+  # Check if New Relic frontend is reachable
+  if [ -n "${NEWRELIC_BASE}" ] && curl -sf "${NEWRELIC_BASE}/health" > /dev/null 2>&1; then
+    run_requests "${NEWRELIC_BASE}" "NewRelic"
+  elif [ -z "${NEWRELIC_BASE}" ]; then
+    echo "  [SKIP] NEWRELIC_BASE not set in .env"
+  else
+    echo "  [SKIP] New Relic frontend not reachable at ${NEWRELIC_BASE}"
   fi
 
   if [ "${round}" -lt "${ROUNDS}" ]; then

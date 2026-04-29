@@ -83,10 +83,10 @@ metadata:
   name: frontend-ui
   namespace: demo-fargate
 spec:
-  type: ClusterIP
+  type: LoadBalancer
   selector:
     app: frontend-ui
   ports:
-    - port: 8000
+    - port: 80
       targetPort: 8000
       name: http

@@ -68,7 +68,7 @@ variable "synthetics_canary_url" {
 }
 
 variable "new_relic_metric_stream_enabled" {
-  description = "Enable CloudWatch Metric Streams to New Relic"
+  description = "Enable CloudWatch Metric Streams to New Relic (requires Kinesis Firehose subscription)"
   type        = bool
-  default     = true
+  default     = false
 }

@@ -43,7 +43,7 @@ resource "aws_eks_fargate_profile" "demo_fargate" {
   cluster_name           = aws_eks_cluster.main.name
   fargate_profile_name   = "demo-fargate"
   pod_execution_role_arn = aws_iam_role.eks_fargate.arn
-  subnet_ids             = aws_subnet.public[*].id
+  subnet_ids             = aws_subnet.private[*].id
 
   selector {
     namespace = "demo-fargate"
@@ -61,7 +61,7 @@ resource "aws_eks_fargate_profile" "demo_fargate" {
 #   cluster_name           = aws_eks_cluster.main.name
 #   fargate_profile_name   = "kube-system"
 #   pod_execution_role_arn = aws_iam_role.eks_fargate.arn
-#   subnet_ids             = aws_subnet.public[*].id
+#   subnet_ids             = aws_subnet.private[*].id
 #
 #   selector {
 #     namespace = "kube-system"
@@ -76,7 +76,7 @@ resource "aws_eks_fargate_profile" "aws_observability" {
   cluster_name           = aws_eks_cluster.main.name
   fargate_profile_name   = "aws-observability"
   pod_execution_role_arn = aws_iam_role.eks_fargate.arn
-  subnet_ids             = aws_subnet.public[*].id
+  subnet_ids             = aws_subnet.private[*].id
 
   selector {
     namespace = "aws-observability"

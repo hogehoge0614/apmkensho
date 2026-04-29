@@ -73,7 +73,7 @@ output "app_signals_fargate_role_arn" {
 
 output "firehose_stream_name" {
   description = "Kinesis Firehose stream name for New Relic metrics"
-  value       = aws_kinesis_firehose_delivery_stream.newrelic_metrics.name
+  value       = var.new_relic_metric_stream_enabled ? aws_kinesis_firehose_delivery_stream.newrelic_metrics[0].name : "(disabled)"
 }
 
 output "synthetics_canary_name" {
