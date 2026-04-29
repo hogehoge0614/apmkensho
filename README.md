@@ -22,9 +22,10 @@
 12. [New Relic Kubernetes で確認する観点](#12-new-relic-kubernetes-で確認する観点)
 13. [New Relic Logs で確認する観点](#13-new-relic-logs-で確認する観点)
 14. [APM 機能有意差の重点確認シナリオ](#14-apm-機能有意差の重点確認シナリオ)
-15. [機能差比較表](#15-機能差比較表)
-16. [PoC 後の削除手順](#16-poc-後の削除手順)
-17. [前提・注意事項](#17-前提注意事項)
+15. [CloudWatch → New Relic ログ転送シナリオ（エージェントレス）](#15-cloudwatch--new-relic-ログ転送シナリオエージェントレス)
+16. [機能差比較表](#16-機能差比較表)
+17. [PoC 後の削除手順](#17-poc-後の削除手順)
+18. [前提・注意事項](#18-前提注意事項)
 
 ---
 
@@ -614,7 +615,137 @@ for i in $(seq 1 30); do curl -s ${EC2_BASE}/api/checkout/slow-payment > /dev/nu
 
 ---
 
-## 15. 機能差比較表
+## 15. CloudWatch → New Relic ログ転送シナリオ（エージェントレス）
+
+> **目的**: New Relic エージェントによる直接収集を停止し、CloudWatch が収集したログ・メトリクスの重要メッセージだけを New Relic に転送した場合、障害検知・エスカレーション対応がどこまで改善するかを確認する。
+
+### アーキテクチャ
+
+```
+EKS Pod stdout/stderr
+  └─ Fluent Bit (CW addon) ──→ CloudWatch Logs
+                                  /aws/containerinsights/obs-poc/application
+                                         │
+                                  Subscription Filter
+                                  filter_pattern: ?ERROR ?CRITICAL ?FATAL ?Exception ?Traceback
+                                         │  ← ここでフィルタ。マッチした行だけ流れる
+                                  Kinesis Firehose (HTTP endpoint destination)
+                                         │
+                                  New Relic Log API (log-api.newrelic.com/log/v1)
+                                         │
+                            New Relic Logs / Alerts / Applied Intelligence
+```
+
+- **Lambda ゼロ**: フィルタリングは CloudWatch Logs のサブスクリプションフィルターパターンで完結
+- **転送対象**: ERROR/CRITICAL/FATAL/Exception/Traceback を含む行のみ（ノイズ削減）
+- **New Relic エージェント**: 無効（namespace `demo-newrelic` には何もデプロイしない）
+- **New Relic APM トレース・メトリクス**: 取得しない。ログのみを New Relic に渡す
+
+### 有効化手順
+
+```bash
+# 1. .env に NR ライセンスキーが設定されていることを確認
+source .env
+
+# 2. Terraform 変数を有効化して apply
+cd infra/terraform
+terraform apply \
+  -var="new_relic_license_key=${NEW_RELIC_LICENSE_KEY}" \
+  -var="new_relic_account_id=${NEW_RELIC_ACCOUNT_ID}" \
+  -var="cw_to_newrelic_enabled=true"
+```
+
+`apply` 完了後、EKS アプリからエラーが発生すると自動的に New Relic Logs に転送される。
+
+### 確認シナリオ G: エラーログの New Relic 到達確認
+
+**操作**:
+```bash
+source .env
+# EC2 デプロイ済みの場合はそのエンドポイントでも可
+for i in $(seq 1 10); do curl -s ${EC2_BASE}/api/checkout/payment-error > /dev/null; done
+```
+
+**New Relic 側の確認**:
+1. New Relic One → **Logs** → すべてのログを表示
+2. 検索クエリ:
+   ```sql
+   SELECT * FROM Log
+   WHERE logGroup = '/aws/containerinsights/obs-poc/application'
+   SINCE 10 minutes ago
+   ```
+3. `logStream`・`logGroup` 属性が入っていることを確認（Firehose が CW Logs の生 JSON をそのまま転送するため自動付与）
+
+| 観点 | CloudWatch のみ | CW → Firehose → NR 転送あり |
+|------|----------------|------------------------------|
+| エラーログの到達先 | CloudWatch Logs Insights のみ | New Relic Logs にも自動転送 |
+| 検索インタフェース | CWL Insights (SQL ライク) | NRQL / New Relic Logs UI |
+| ノイズ量 | 全ログが流れる | ERROR 系のみフィルタ済み（サブスクリプションフィルターで制御） |
+| カスタムコード | 不要 | 不要（Lambda ゼロ） |
+| 転送コスト | - | Firehose $0.029/GB + NR インジェスト |
+
+---
+
+### 確認シナリオ H: NRQL アラートによる障害自動検知
+
+CloudWatch Alarm との比較：同じ「エラーが N 件/分を超えたら通知」をどちらが簡単に設定できるか。
+
+**New Relic アラート設定手順**:
+1. New Relic One → **Alerts** → Create alert condition
+2. Signal type: **NRQL**
+3. 条件式:
+   ```sql
+   SELECT count(*) FROM Log
+   WHERE source = 'cloudwatch-forwarded'
+   AND level = 'error'
+   FACET log.stream
+   ```
+4. しきい値: `count > 5 for at least 1 minute` で Critical
+
+**CloudWatch Alarm 設定手順（比較）**:
+1. CloudWatch → Alarms → Create alarm
+2. メトリクス: `AWS/Logs` → `IncomingLogEvents`（エラー件数の直接メトリクスは存在しない）
+3. エラーカウントのメトリクスフィルタを先に作成してからアラームを設定（2ステップ）
+
+| 観点 | CloudWatch Alarm | New Relic NRQL Alert |
+|------|-----------------|----------------------|
+| 条件定義の手順 | メトリクスフィルタ作成 → Alarm 作成（2ステップ） | NRQL 1 行でそのままアラート化 |
+| フィルタの柔軟性 | ログメトリクスフィルタのパターン構文に制約あり | ログの任意フィールドを WHERE / FACET で絞り込み可 |
+| 複数サービスの集約 | サービスごとにアラームが必要 | `FACET log.stream` で一条件に集約 |
+| 通知先 | SNS → メール / Lambda / Slack（別途設定） | Workflows で Slack / PagerDuty / メールを統合管理 |
+
+---
+
+### 確認シナリオ I: Applied Intelligence による異常集約とエスカレーション
+
+**操作**: `payment-error` シナリオを断続的に流し、New Relic が複数のアラートをどう集約するかを確認
+
+1. New Relic One → **Alerts** → Issues & Activity
+2. 同じエラーストリームから発火した複数のアラートが **1 Issue** に集約されているか確認
+3. Issue 詳細 → "Correlated alerts" でログ件数の時系列グラフを確認
+4. Acknowledge / Resolve ボタンでエスカレーション状態を管理
+
+| 観点 | CloudWatch | New Relic Applied Intelligence |
+|------|-----------|-------------------------------|
+| 複数アラートの集約 | なし（アラームは個別に発火） | Issues に自動集約・重複排除 |
+| 根本原因の提示 | なし | 相関するエンティティ・ログを Issue に自動リンク |
+| エスカレーション状態管理 | なし | Acknowledged / Resolved / In progress |
+| オンコール通知 | SNS + 手動ルーティング | Workflows → PagerDuty / Slack / Opsgenie 統合 |
+
+### エージェントレス構成の制約まとめ
+
+| 取得できるデータ | 取得できないデータ |
+|----------------|-----------------|
+| ERROR 以上のログ（NR Logs） | APM トレース・スパン |
+| ログに基づく NRQL アラート | サービスマップ・依存関係 |
+| Applied Intelligence によるアラート集約 | Transaction Traces・Breakdown |
+| ログからの手動トレース検索 | Errors Inbox のスタックトレース自動グルーピング |
+
+> **結論**: エージェントレスでも NR の「アラート定義の簡潔さ・Applied Intelligence の集約・エスカレーション管理」は有効。ただし APM レベルの根本原因分析（トレース・スタックトレース）は得られないため、エージェントフル構成との組み合わせが最大効果。
+
+---
+
+## 16. 機能差比較表
 
 | 機能 | CloudWatch Application Signals | New Relic APM |
 |------|-------------------------------|---------------|
@@ -641,7 +772,7 @@ for i in $(seq 1 30); do curl -s ${EC2_BASE}/api/checkout/slow-payment > /dev/nu
 
 ---
 
-## 16. PoC 後の削除手順
+## 17. PoC 後の削除手順
 
 ```bash
 make down
@@ -660,7 +791,7 @@ make destroy-check
 
 ---
 
-## 17. 前提・注意事項
+## 18. 前提・注意事項
 
 - **AWS アカウント**: `AdministratorAccess` 相当が必要（EKS, ECR, IAM, VPC, CloudWatch, Cognito, S3, Kinesis Firehose, Synthetics を作成するため）
 - **New Relic**: Pro 以上のライセンスを推奨（k8s-agents-operator は Full Stack Observability 要）

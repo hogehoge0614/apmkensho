@@ -19,7 +19,7 @@ variable "cluster_version" {
 variable "node_instance_type" {
   description = "EC2 instance type for managed node group"
   type        = string
-  default     = "t3.medium"
+  default     = "t3.small"
 }
 
 variable "node_count" {
@@ -69,6 +69,12 @@ variable "synthetics_canary_url" {
 
 variable "new_relic_metric_stream_enabled" {
   description = "Enable CloudWatch Metric Streams to New Relic (requires Kinesis Firehose subscription)"
+  type        = bool
+  default     = false
+}
+
+variable "cw_to_newrelic_enabled" {
+  description = "Enable CloudWatch Logs → New Relic forwarder Lambda (agentless scenario)"
   type        = bool
   default     = false
 }

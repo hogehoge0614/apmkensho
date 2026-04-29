@@ -75,12 +75,14 @@ tf-init:
 tf-plan:
 	@echo "==> Planning Terraform..."
 	@cd $(TF_DIR) && terraform plan \
+		-var="cluster_name=$(CLUSTER_NAME)" \
 		-var="new_relic_license_key=$(NEW_RELIC_LICENSE_KEY)" \
 		-var="new_relic_account_id=$(NEW_RELIC_ACCOUNT_ID)"
 
 tf-apply:
 	@echo "==> Applying Terraform..."
 	@cd $(TF_DIR) && terraform apply -auto-approve \
+		-var="cluster_name=$(CLUSTER_NAME)" \
 		-var="new_relic_license_key=$(NEW_RELIC_LICENSE_KEY)" \
 		-var="new_relic_account_id=$(NEW_RELIC_ACCOUNT_ID)"
 
@@ -170,6 +172,7 @@ down:
 	@echo ""
 	@echo "==> [4/5] Running Terraform destroy..."
 	@cd $(TF_DIR) && terraform destroy -auto-approve \
+		-var="cluster_name=$(CLUSTER_NAME)" \
 		-var="new_relic_license_key=$(NEW_RELIC_LICENSE_KEY)" \
 		-var="new_relic_account_id=$(NEW_RELIC_ACCOUNT_ID)" \
 		2>/dev/null || echo "  Terraform destroy completed with some errors - check manually"
@@ -189,5 +192,6 @@ destroy-check:
 
 tf-destroy:
 	@cd $(TF_DIR) && terraform destroy -auto-approve \
+		-var="cluster_name=$(CLUSTER_NAME)" \
 		-var="new_relic_license_key=$(NEW_RELIC_LICENSE_KEY)" \
 		-var="new_relic_account_id=$(NEW_RELIC_ACCOUNT_ID)"
