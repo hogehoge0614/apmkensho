@@ -1,0 +1,55 @@
+---
+# -------------------------------------------------------
+# CloudWatch Application Signals path
+# -------------------------------------------------------
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo-ec2
+  labels:
+    monitoring: "enabled"
+    environment: "demo-ec2"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo-fargate
+  labels:
+    monitoring: "enabled"
+    environment: "demo-fargate"
+---
+# ServiceAccount for Application Signals (EC2) - needs IRSA for X-Ray / CloudWatch
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: app-signals-sa
+  namespace: demo-ec2
+  annotations:
+    eks.amazonaws.com/role-arn: "${APP_SIGNALS_EC2_ROLE_ARN}"
+---
+# ServiceAccount for Application Signals (Fargate) - needs IRSA for X-Ray / CloudWatch
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: app-signals-sa
+  namespace: demo-fargate
+  annotations:
+    eks.amazonaws.com/role-arn: "${APP_SIGNALS_FARGATE_ROLE_ARN}"
+---
+# -------------------------------------------------------
+# New Relic APM path
+# -------------------------------------------------------
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo-newrelic
+  labels:
+    monitoring: "enabled"
+    environment: "demo-newrelic"
+---
+# ServiceAccount for New Relic apps - no AWS IRSA needed (NR agent sends to NR cloud)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: newrelic-app-sa
+  namespace: demo-newrelic

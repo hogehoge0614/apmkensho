@@ -1,0 +1,22 @@
+# New Relic nri-bundle - EC2 specific overrides
+# Merged with newrelic-values.yaml
+
+# EC2: Full DaemonSet-based infrastructure agent
+newrelic-infrastructure:
+  enabled: true
+  privileged: true
+
+  # Only deploy on EC2 nodes for this profile
+  nodeSelector:
+    node-type: ec2
+
+  tolerations:
+    - operator: Exists
+
+# Full logging on EC2
+newrelic-logging:
+  enabled: true
+  nodeSelector:
+    node-type: ec2
+  tolerations:
+    - operator: Exists

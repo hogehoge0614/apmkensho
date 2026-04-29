@@ -1,0 +1,36 @@
+# New Relic nri-bundle - Fargate specific overrides
+# IMPORTANT: DaemonSet is NOT supported on Fargate
+# Infrastructure agent cannot run on Fargate as DaemonSet
+# Workaround: Use nri-kube-events + kube-state-metrics (run as Deployment on EC2 nodes)
+# APM still works via New Relic Python agent in app container
+
+# CONSTRAINT: newrelic-infrastructure DaemonSet cannot run on Fargate pods
+# We deploy it only on EC2 nodes, and it still reports Fargate pod metrics via K8s API
+newrelic-infrastructure:
+  enabled: true
+  privileged: true
+  # Only on EC2 nodes (will still collect Fargate pod data via K8s API)
+  nodeSelector:
+    node-type: ec2
+
+# Fargate Fluent Bit: Use aws-for-fluent-bit Fargate log routing instead
+# New Relic logging DaemonSet cannot run on Fargate
+newrelic-logging:
+  enabled: true
+  # DaemonSet only runs on EC2, Fargate logs via aws-observability/fluent-bit-cloudwatch config
+  nodeSelector:
+    node-type: ec2
+
+# These run as Deployments (supported on both EC2 and Fargate)
+kube-state-metrics:
+  enabled: true
+  nodeSelector:
+    node-type: ec2  # Run on EC2 to reduce Fargate cost
+
+nri-kube-events:
+  enabled: true
+  nodeSelector:
+    node-type: ec2
+
+nri-metadata-injection:
+  enabled: true

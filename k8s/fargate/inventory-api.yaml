@@ -1,0 +1,88 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory-api
+  namespace: demo-fargate
+  labels:
+    app: inventory-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: inventory-api
+  template:
+    metadata:
+      labels:
+        app: inventory-api
+        environment: demo-fargate
+      annotations:
+        # NOTE: On Fargate, Application Signals inject via sidecar (not DaemonSet)
+        # The CloudWatch Observability addon handles this via mutating webhook
+        instrumentation.opentelemetry.io/inject-python: "true"
+        # Fargate: Fluent Bit runs as sidecar via aws-observability ConfigMap
+    spec:
+      serviceAccountName: app-signals-sa
+      # No nodeSelector needed - Fargate Profile selects by namespace
+      containers:
+        - name: inventory-api
+          image: ${ECR_REGISTRY}/obs-poc/inventory-api:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          env:
+            - name: SERVICE_NAME
+              value: "inventory-api"
+            - name: ENVIRONMENT
+              value: "demo-fargate"
+            - name: EXTERNAL_URL
+              value: "http://external-api-simulator:8000"
+            - name: ORDER_URL
+              value: "http://order-api:8000"
+            - name: INVENTORY_URL
+              value: "http://inventory-api:8000"
+            - name: PAYMENT_URL
+              value: "http://payment-api:8000"
+            # On Fargate: OTLP to CloudWatch Agent sidecar (injected by addon webhook)
+            # If addon webhook not available, send directly to CW OTLP endpoint
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://localhost:4317"
+            - name: OTEL_SERVICE_NAME
+              value: "inventory-api"
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "deployment.environment=demo-fargate,k8s.namespace.name=demo-fargate"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          resources:
+            requests:
+              cpu: "256m"
+              memory: "512Mi"
+            limits:
+              cpu: "512m"
+              memory: "1Gi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: inventory-api
+  namespace: demo-fargate
+spec:
+  type: ClusterIP
+  selector:
+    app: inventory-api
+  ports:
+    - port: 8000
+      targetPort: 8000
+      name: http

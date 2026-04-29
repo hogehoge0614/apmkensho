@@ -1,0 +1,70 @@
+# New Relic nri-bundle Helm values - Base configuration
+# Apply on top with ec2 or fargate specific values
+
+global:
+  licenseKey: ""  # Set via --set or secret
+  cluster: "obs-poc"
+  lowDataMode: true  # PoC: reduce data ingestion
+
+# New Relic Infrastructure Agent (DaemonSet on EC2)
+newrelic-infrastructure:
+  enabled: true
+  privileged: true
+  kubelet:
+    enabled: true
+  ksm:
+    enabled: true
+  # Fargate: DaemonSet not supported - set enabled: false in fargate values
+
+# Kubernetes Events
+nri-kube-events:
+  enabled: true
+
+# Kubernetes State Metrics
+kube-state-metrics:
+  enabled: true
+
+# Prometheus Node Exporter
+newrelic-prometheus-agent:
+  enabled: true
+  lowDataMode: true
+  config:
+    kubernetes:
+      integrations_filter:
+        enabled: true
+
+# New Relic Logging (Fluent Bit)
+newrelic-logging:
+  enabled: true
+  lowDataMode: true
+  fluentBit:
+    criEnabled: true
+    # Include trace context in logs for Logs in Context
+    extraEnv:
+      - name: NEW_RELIC_LICENSE_KEY
+        valueFrom:
+          secretKeyRef:
+            name: newrelic-secret
+            key: license-key
+
+# New Relic Pixie (disabled - not supported on Fargate, complex for PoC)
+pixie-chart:
+  enabled: false
+
+newrelic-pixie:
+  enabled: false
+
+# New Relic Kubernetes Metadata
+nri-metadata-injection:
+  enabled: true
+
+# OpenTelemetry Collector (not used - NR agent path does not need OTel collector)
+newrelic-k8s-otel-collector:
+  enabled: false
+
+# New Relic APM Auto-Attach: Kubernetes Agents Operator
+# Injects NR Python agent as init container into annotated pods.
+# Pod annotation: instrumentation.newrelic.com/inject-python: "newrelic"
+# Analogous to the OTel Operator used by CloudWatch Application Signals.
+k8s-agents-operator:
+  enabled: true

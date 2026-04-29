@@ -1,0 +1,29 @@
+# New Relic APM Auto-Attach: Instrumentation CR
+# k8s-agents-operator watches this CR and injects the NR Python agent
+# as an init container into pods annotated with:
+#   instrumentation.newrelic.com/inject-python: "newrelic"
+#
+# This is the NR equivalent of the OTel Operator Instrumentation CR used
+# by the CloudWatch Application Signals path.
+---
+apiVersion: newrelic.com/v1alpha2
+kind: Instrumentation
+metadata:
+  name: newrelic-python
+  namespace: demo-newrelic
+spec:
+  agent:
+    language: python
+    image: newrelic/newrelic-python-init:latest
+  env:
+    - name: NEW_RELIC_LICENSE_KEY
+      valueFrom:
+        secretKeyRef:
+          name: newrelic-secret
+          key: license-key
+    - name: NEW_RELIC_DISTRIBUTED_TRACING_ENABLED
+      value: "true"
+    - name: NEW_RELIC_LOG
+      value: "stdout"
+    - name: NEW_RELIC_LOG_LEVEL
+      value: "info"
