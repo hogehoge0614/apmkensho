@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+{% block title %}Chaos Control{% endblock %}
+{% block breadcrumb %}Chaos Control — 障害シミュレーション{% endblock %}
+
+{% block content %}
+<div class="space-y-6 max-w-4xl">
+
+  <div>
+    <h1 class="text-2xl font-bold text-white">Chaos Control Panel</h1>
+    <p class="text-sm text-slate-500 mt-1">観測性ハンズオン用の障害シミュレーション。各シナリオでCloudWatchの挙動を確認しましょう。</p>
+  </div>
+
+  <!-- Current state -->
+  <div class="bg-[#0a1628] border border-slate-800/60 rounded-xl p-5">
+    <h2 class="text-sm font-semibold text-slate-300 mb-4">現在の状態</h2>
+    <div class="grid grid-cols-3 gap-4">
+      <div class="text-center p-4 rounded-lg border {% if chaos_state.get('slow_query') %}bg-yellow-500/10 border-yellow-500/30{% else %}bg-slate-800/40 border-slate-700/40{% endif %}">
+        <div class="text-xs text-slate-500 mb-1">低速クエリ</div>
+        {% if chaos_state.get('slow_query') %}
+        <div class="text-lg font-bold text-yellow-400">ON</div>
+        <div class="text-[10px] text-yellow-600">{{ chaos_state.get('slow_ms', 3000) }}ms遅延</div>
+        {% else %}
+        <div class="text-lg font-bold text-slate-600">OFF</div>
+        {% endif %}
+      </div>
+      <div class="text-center p-4 rounded-lg border {% if chaos_state.get('error_rate', 0) > 0 %}bg-red-500/10 border-red-500/30{% else %}bg-slate-800/40 border-slate-700/40{% endif %}">
+        <div class="text-xs text-slate-500 mb-1">エラー注入</div>
+        {% if chaos_state.get('error_rate', 0) > 0 %}
+        <div class="text-lg font-bold text-red-400">{{ chaos_state.get('error_rate') }}%</div>
+        <div class="text-[10px] text-red-600">エラー率</div>
+        {% else %}
+        <div class="text-lg font-bold text-slate-600">OFF</div>
+        {% endif %}
+      </div>
+      <div class="text-center p-4 rounded-lg border bg-slate-800/40 border-slate-700/40">
+        <div class="text-xs text-slate-500 mb-1">アラートストーム</div>
+        <div class="text-lg font-bold text-slate-600">—</div>
+      </div>
+    </div>
+    <div class="mt-4">
+      <button onclick="resetAll()" class="px-5 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm font-medium rounded-lg transition-colors border border-slate-600/40">
+        ← すべてリセット
+      </button>
+    </div>
+  </div>
+
+  <!-- Scenario 1: Slow Query -->
+  <div class="bg-[#0a1628] border border-slate-800/60 rounded-xl p-5">
+    <div class="flex items-start justify-between mb-4">
+      <div>
+        <div class="flex items-center gap-2 mb-1">
+          <span class="text-xs px-2 py-0.5 bg-yellow-500/10 text-yellow-400 rounded-md border border-yellow-500/20">シナリオ 1</span>
+          <span class="text-sm font-semibold text-slate-200">低速クエリ（Slow Query）</span>
+        </div>
+        <p class="text-xs text-slate-500">device-api のデバイス一覧クエリに人工的な遅延を追加。Application Signals でレイテンシP99スパイクを観察する。</p>
+      </div>
+    </div>
+    <div class="bg-slate-900/60 rounded-lg p-4 mb-4 space-y-2 text-xs">
+      <div class="text-slate-400 font-semibold">CloudWatchで確認すること：</div>
+      <ul class="space-y-1 text-slate-500 list-disc list-inside">
+        <li>Application Signals → サービス → device-api → レイテンシ グラフの P99 スパイク</li>
+        <li>Application Signals → サービスマップ → netwatch-ui → device-api の矢印が赤くなる</li>
+        <li>X-Ray トレース → タイムライン表示 → device-api の span が長い</li>
+        <li>Log Insights: <code class="text-cyan-400">filter @message like "slow_query" | stats avg(duration_ms) by bin(1m)</code></li>
+      </ul>
+    </div>
+    <div class="flex items-center gap-3">
+      <select id="slow-ms" class="bg-slate-800 border border-slate-700/60 rounded-lg px-3 py-2 text-sm text-slate-300">
+        <option value="2000">2秒</option>
+        <option value="5000" selected>5秒</option>
+        <option value="10000">10秒</option>
+      </select>
+      <button onclick="enableSlowQuery()" class="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-white text-sm font-medium rounded-lg transition-colors">有効にする</button>
+      <button onclick="disableSlowQuery()" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm rounded-lg transition-colors">無効にする</button>
+    </div>
+    <div class="mt-3 text-xs text-slate-600">有効後: <a href="/devices" class="text-cyan-600 hover:text-cyan-500">/devices</a> ページを開くと遅延が発生します</div>
+  </div>
+
+  <!-- Scenario 2: Error Injection -->
+  <div class="bg-[#0a1628] border border-slate-800/60 rounded-xl p-5">
+    <div class="flex items-start justify-between mb-4">
+      <div>
+        <div class="flex items-center gap-2 mb-1">
+          <span class="text-xs px-2 py-0.5 bg-red-500/10 text-red-400 rounded-md border border-red-500/20">シナリオ 2</span>
+          <span class="text-sm font-semibold text-slate-200">エラー注入（Error Injection）</span>
+        </div>
+        <p class="text-xs text-slate-500">device-api の一定割合のリクエストを強制的に HTTP 500 エラーにする。エラー率の急上昇を検知する。</p>
+      </div>
+    </div>
+    <div class="bg-slate-900/60 rounded-lg p-4 mb-4 space-y-2 text-xs">
+      <div class="text-slate-400 font-semibold">CloudWatchで確認すること：</div>
+      <ul class="space-y-1 text-slate-500 list-disc list-inside">
+        <li>Application Signals → サービス → device-api → エラー率 グラフの上昇</li>
+        <li>CloudWatch Logs → /aws/containerinsights/obs-poc/application → ERROR ログ検索</li>
+        <li>Log Insights: <code class="text-cyan-400">filter levelname = "ERROR" | stats count() by bin(1m)</code></li>
+        <li>アラーム設定例: エラー率 > 5% で SNS 通知</li>
+      </ul>
+    </div>
+    <div class="flex items-center gap-3">
+      <select id="error-rate" class="bg-slate-800 border border-slate-700/60 rounded-lg px-3 py-2 text-sm text-slate-300">
+        <option value="20">20% エラー</option>
+        <option value="50" selected>50% エラー</option>
+        <option value="80">80% エラー</option>
+      </select>
+      <button onclick="enableErrorInject()" class="px-4 py-2 bg-red-700 hover:bg-red-600 text-white text-sm font-medium rounded-lg transition-colors">有効にする</button>
+      <button onclick="disableErrorInject()" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm rounded-lg transition-colors">無効にする</button>
+    </div>
+    <div class="mt-3 text-xs text-slate-600">有効後: <a href="/devices" class="text-cyan-600 hover:text-cyan-500">/devices</a> を複数回リロードするとエラーが発生します</div>
+  </div>
+
+  <!-- Scenario 3: Alert Storm -->
+  <div class="bg-[#0a1628] border border-slate-800/60 rounded-xl p-5">
+    <div class="flex items-start justify-between mb-4">
+      <div>
+        <div class="flex items-center gap-2 mb-1">
+          <span class="text-xs px-2 py-0.5 bg-orange-500/10 text-orange-400 rounded-md border border-orange-500/20">シナリオ 3</span>
+          <span class="text-sm font-semibold text-slate-200">アラートストーム</span>
+        </div>
+        <p class="text-xs text-slate-500">alert-api から大量のアラートを短時間で生成。ログボリュームの急増とアラート疲労を体験する。</p>
+      </div>
+    </div>
+    <div class="bg-slate-900/60 rounded-lg p-4 mb-4 space-y-2 text-xs">
+      <div class="text-slate-400 font-semibold">CloudWatchで確認すること：</div>
+      <ul class="space-y-1 text-slate-500 list-disc list-inside">
+        <li>CloudWatch Logs → ログのバイト数メトリクスが急増</li>
+        <li>Log Insights: <code class="text-cyan-400">filter event = "alert_storm" | stats count() by severity</code></li>
+        <li>Container Insights → ネームスペース demo-ec2 → alert-api のCPU使用率</li>
+        <li>アラーム設定例: ログ取り込み量 > 閾値 で通知</li>
+      </ul>
+    </div>
+    <div class="flex items-center gap-3">
+      <button onclick="startAlertStorm()" class="px-4 py-2 bg-orange-700 hover:bg-orange-600 text-white text-sm font-medium rounded-lg transition-colors">ストーム開始 (60件)</button>
+      <button onclick="stopAlertStorm()" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm rounded-lg transition-colors">停止</button>
+    </div>
+    <div class="mt-3 text-xs text-slate-600">開始後: <a href="/alerts" class="text-cyan-600 hover:text-cyan-500">/alerts</a> ページでアラートが増加します</div>
+  </div>
+
+  <!-- Status messages -->
+  <div id="status-msg" class="hidden text-sm p-4 bg-slate-800/60 border border-slate-700/40 rounded-xl text-slate-300"></div>
+
+</div>
+
+<script>
+async function post(path, params) {
+  const url = new URL(path, window.location.origin);
+  Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+  const r = await fetch(url, {method: 'POST'});
+  showStatus(r.ok ? '✓ ' + await r.text() : '✗ エラーが発生しました');
+  setTimeout(() => location.reload(), 1500);
+}
+
+function showStatus(msg) {
+  const el = document.getElementById('status-msg');
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+
+const enableSlowQuery  = () => post('/api/chaos/slow-query',   {enable: true,  duration_ms: document.getElementById('slow-ms').value});
+const disableSlowQuery = () => post('/api/chaos/slow-query',   {enable: false, duration_ms: 3000});
+const enableErrorInject  = () => post('/api/chaos/error-inject', {rate: document.getElementById('error-rate').value});
+const disableErrorInject = () => post('/api/chaos/error-inject', {rate: 0});
+const startAlertStorm  = () => post('/api/chaos/alert-storm',  {enable: true});
+const stopAlertStorm   = () => post('/api/chaos/alert-storm',  {enable: false});
+const resetAll         = () => post('/api/chaos/reset',        {});
+</script>
+{% endblock %}

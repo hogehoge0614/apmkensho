@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}アラート{% endblock %}
+{% block breadcrumb %}アラート一覧{% endblock %}
+
+{% block content %}
+<div class="space-y-5">
+
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-2xl font-bold text-white">アラート一覧</h1>
+      <p class="text-sm text-slate-500 mt-1">{{ total }}件のアラート</p>
+    </div>
+  </div>
+
+  <!-- Filter -->
+  <form method="GET" action="/alerts" class="flex flex-wrap gap-3 bg-[#0a1628] border border-slate-800/60 rounded-xl p-4">
+    <select name="severity" class="bg-slate-800/60 border border-slate-700/60 rounded-lg px-3 py-2 text-sm text-slate-300 focus:outline-none focus:border-cyan-500/50">
+      <option value="">重要度: すべて</option>
+      {% for val, label in [('critical','Critical'),('warning','Warning'),('info','Info')] %}
+      <option value="{{ val }}" {% if filters.severity == val %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <select name="area" class="bg-slate-800/60 border border-slate-700/60 rounded-lg px-3 py-2 text-sm text-slate-300 focus:outline-none focus:border-cyan-500/50">
+      <option value="">エリア: すべて</option>
+      {% for val, label in [('tokyo','東京'),('osaka','大阪'),('nagoya','名古屋'),('fukuoka','福岡'),('sapporo','札幌')] %}
+      <option value="{{ val }}" {% if filters.area == val %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium rounded-lg transition-colors">フィルタ</button>
+    <a href="/alerts" class="px-4 py-2 bg-slate-700/60 hover:bg-slate-700 text-slate-300 text-sm rounded-lg transition-colors">クリア</a>
+  </form>
+
+  <!-- Alert list -->
+  <div class="space-y-2">
+    {% for alert in alerts %}
+    <div id="alert-{{ alert.id }}" class="flex items-start gap-4 p-4 bg-[#0a1628] border rounded-xl transition-all
+      {% if alert.severity == 'critical' %}border-red-500/30 hover:border-red-500/50
+      {% elif alert.severity == 'warning' %}border-yellow-500/20 hover:border-yellow-500/40
+      {% else %}border-blue-500/20 hover:border-blue-500/30{% endif %}">
+
+      <!-- Severity indicator -->
+      <div class="flex-shrink-0 pt-0.5">
+        {% if alert.severity == 'critical' %}
+        <div class="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse mt-1"></div>
+        {% elif alert.severity == 'warning' %}
+        <div class="w-2.5 h-2.5 rounded-full bg-yellow-500 animate-pulse mt-1"></div>
+        {% else %}
+        <div class="w-2.5 h-2.5 rounded-full bg-blue-400 mt-1"></div>
+        {% endif %}
+      </div>
+
+      <!-- Content -->
+      <div class="flex-1 min-w-0">
+        <div class="flex flex-wrap items-center gap-2 mb-1">
+          {% if alert.severity == 'critical' %}
+          <span class="text-xs font-bold text-red-400 uppercase tracking-wide">CRITICAL</span>
+          {% elif alert.severity == 'warning' %}
+          <span class="text-xs font-bold text-yellow-400 uppercase tracking-wide">WARNING</span>
+          {% else %}
+          <span class="text-xs font-bold text-blue-400 uppercase tracking-wide">INFO</span>
+          {% endif %}
+          <span class="text-[10px] text-slate-600 bg-slate-800/60 px-1.5 py-0.5 rounded">{{ alert.type }}</span>
+          <a href="/devices/{{ alert.device_id }}" class="text-sm font-medium text-slate-200 hover:text-cyan-400 transition-colors">{{ alert.device_name }}</a>
+          <span class="text-[10px] text-slate-600 font-mono">{{ alert.device_id }}</span>
+        </div>
+        <div class="text-sm text-slate-400">{{ alert.message }}</div>
+        <div class="text-[10px] text-slate-600 mt-1.5">発生: {{ alert.created_at | replace('T',' ') | truncate(19, True, '') }} JST</div>
+      </div>
+
+      <!-- Actions -->
+      <div class="flex items-center gap-2 flex-shrink-0">
+        {% if alert.id.startswith('ALT-') %}
+        <span class="text-[10px] px-2 py-1 bg-slate-800/60 text-slate-600 rounded-md border border-slate-700/40">{{ alert.id }}</span>
+        {% else %}
+        <span class="text-[10px] px-2 py-1 bg-orange-500/10 text-orange-500 rounded-md border border-orange-500/20">STORM</span>
+        {% endif %}
+        {% if alert.status == 'active' %}
+        <button onclick="resolveAlert('{{ alert.id }}')"
+          class="text-xs px-3 py-1.5 bg-slate-800/60 hover:bg-slate-700/60 text-slate-400 hover:text-slate-200 rounded-lg border border-slate-700/40 transition-colors">
+          解決
+        </button>
+        {% else %}
+        <span class="text-xs px-3 py-1.5 text-slate-700">解決済み</span>
+        {% endif %}
+      </div>
+    </div>
+    {% else %}
+    <div class="flex items-center justify-center h-48 bg-[#0a1628] border border-slate-800/60 rounded-xl text-sm text-slate-600">
+      条件に一致するアラートはありません
+    </div>
+    {% endfor %}
+  </div>
+
+</div>
+
+<script>
+async function resolveAlert(id) {
+  const r = await fetch(`/api/alerts/${id}/resolve`, {method: 'POST'});
+  if (r.ok) {
+    const el = document.getElementById(`alert-${id}`);
+    if (el) el.style.opacity = '0.3';
+  }
+}
+</script>
+{% endblock %}

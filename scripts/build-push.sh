@@ -4,7 +4,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-# Load env
 if [ -f "${ROOT_DIR}/.env" ]; then
   set -a; source "${ROOT_DIR}/.env"; set +a
 fi
@@ -16,12 +15,9 @@ CLUSTER_NAME="${CLUSTER_NAME:-obs-poc}"
 TAG="${1:-latest}"
 
 SERVICES=(
-  "frontend-ui"
-  "backend-for-frontend"
-  "order-api"
-  "inventory-api"
-  "payment-api"
-  "external-api-simulator"
+  "netwatch-ui"
+  "device-api"
+  "alert-api"
 )
 
 echo "==> Logging in to ECR: ${ECR_REGISTRY}"

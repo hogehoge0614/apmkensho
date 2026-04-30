@@ -41,4 +41,11 @@ kubectl get pod -n demo-newrelic -l app=frontend-ui -o jsonpath='{.items[0].spec
 echo ""
 
 echo ""
-echo "Done. Use 'make port-forward-newrelic' to access the UI."
+LB_HOST=$(kubectl get svc frontend-ui -n demo-newrelic -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
+if [ -n "${LB_HOST}" ]; then
+  echo "Done. New Relic frontend URL: http://${LB_HOST}"
+  echo "Set NEWRELIC_BASE=http://${LB_HOST} in .env"
+else
+  echo "Done. LoadBalancer is provisioning. Run the following to get the URL:"
+  echo "  kubectl get svc frontend-ui -n demo-newrelic -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'"
+fi

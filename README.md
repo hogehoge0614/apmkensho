@@ -1,219 +1,197 @@
-# Observability PoC — CloudWatch Application Signals vs New Relic
+# NetWatch Observability PoC — CloudWatch Application Signals vs New Relic
 
-> **検証コンセプト**: 同一のアプリコード・同一の Docker イメージを使い、インフラ側の設定だけで
-> **CloudWatch Application Signals**（AWS ネイティブ）と **New Relic APM**（New Relic エージェント）
-> がそれぞれどこまで観測できるかを比較する。
+> **検証コンセプト**: 大手キャリアが運用するネットワーク機器監視システム「NetWatch」を題材に、
+> **CloudWatch Application Signals**（AWS ネイティブ）と **New Relic APM**（フェーズ 2）が
+> それぞれ何をどこまで観測できるかを実機でハンズオン体験する。
 
 ---
 
 ## 目次
 
-1. [検証コンセプトと計装アーキテクチャ](#1-検証コンセプトと計装アーキテクチャ)
-2. [全体構成図](#2-全体構成図)
-3. [作成される AWS リソース一覧](#3-作成される-aws-リソース一覧)
-4. [費用概算](#4-費用概算)
-5. [サンプルアプリの構成](#5-サンプルアプリの構成)
-6. [トレース分析用シナリオ](#6-トレース分析用シナリオ)
-7. [クイックスタート](#7-クイックスタート)
+1. [アーキテクチャ概要](#1-アーキテクチャ概要)
+2. [アプリケーション構成（NetWatch）](#2-アプリケーション構成netwatch)
+3. [計装アーキテクチャ](#3-計装アーキテクチャ)
+4. [作成される AWS リソース一覧](#4-作成される-aws-リソース一覧)
+5. [費用概算](#5-費用概算)
+6. [クイックスタート（CloudWatch フェーズ）](#6-クイックスタートcloudwatch-フェーズ)
+7. [カオスシナリオ — ハンズオン学習ガイド](#7-カオスシナリオ--ハンズオン学習ガイド)
 8. [CloudWatch Application Signals で確認する観点](#8-cloudwatch-application-signals-で確認する観点)
-9. [Container Insights で確認する観点](#9-container-insights-で確認する観点)
-10. [CloudWatch Logs で確認する観点](#10-cloudwatch-logs-で確認する観点)
-11. [New Relic APM で確認する観点](#11-new-relic-apm-で確認する観点)
-12. [New Relic Kubernetes で確認する観点](#12-new-relic-kubernetes-で確認する観点)
-13. [New Relic Logs で確認する観点](#13-new-relic-logs-で確認する観点)
-14. [APM 機能有意差の重点確認シナリオ](#14-apm-機能有意差の重点確認シナリオ)
-15. [CloudWatch → New Relic ログ転送シナリオ（エージェントレス）](#15-cloudwatch--new-relic-ログ転送シナリオエージェントレス)
-16. [機能差比較表](#16-機能差比較表)
-17. [PoC 後の削除手順](#17-poc-後の削除手順)
-18. [前提・注意事項](#18-前提注意事項)
+9. [CloudWatch Logs で確認する観点](#9-cloudwatch-logs-で確認する観点)
+10. [Container Insights で確認する観点](#10-container-insights-で確認する観点)
+11. [New Relic フェーズ（フェーズ 2・準備中）](#11-new-relic-フェーズフェーズ-2準備中)
+12. [機能差比較表](#12-機能差比較表)
+13. [PoC 後の削除手順](#13-poc-後の削除手順)
+14. [前提・注意事項](#14-前提注意事項)
 
 ---
 
-## 1. 検証コンセプトと計装アーキテクチャ
-
-### 「アプリに手を加えない」の定義
-
-| 対象 | 変更有無 | 内容 |
-|------|---------|------|
-| `app.py`（アプリコード） | **変更なし** | 純粋な FastAPI。OTel/NR の import なし |
-| `Dockerfile` | **変更なし** | `uvicorn` で起動するだけ |
-| `requirements.txt` | **変更なし** | `fastapi`, `uvicorn`, `httpx`, `python-json-logger` のみ |
-| k8s Deployment annotation | インフラ設定 | エージェント注入のアノテーション |
-| k8s Namespace annotation | インフラ設定 | Operator が参照する注入トリガー |
-| Helm values | インフラ設定 | Operator/エージェントの設定 |
-
-アプリのソースコード・イメージは CloudWatch path / New Relic path で**完全に同一**。
-
-### 計装フロー（アプリ変更ゼロ）
-
-```
-CloudWatch Application Signals path (namespace: demo-ec2, demo-fargate)
-─────────────────────────────────────────────────────────────────────
-App Pod（プレーンな FastAPI イメージ）
-  ↓ OTel Operator（amazon-cloudwatch-observability EKS Add-on 内蔵）
-    Pod annotation: instrumentation.opentelemetry.io/inject-python: "true"
-    → OTel Python SDK を init container として自動注入
-  ↓ OTel SDK が FastAPI・httpx を自動計装
-  ↓ OTLP → cloudwatch-agent.amazon-cloudwatch:4317（ADOT）
-  → CloudWatch Application Signals（APM + Service Map + SLO）
-  → X-Ray（Distributed Tracing）
-  → CloudWatch Logs（Fluent Bit）
-  → Container Insights（メトリクス）
-
-New Relic APM path (namespace: demo-newrelic)
-─────────────────────────────────────────────────────────────────────
-同一の App Pod（同じプレーンな FastAPI イメージ）
-  ↓ k8s-agents-operator（nri-bundle に含まれる）
-    Pod annotation: instrumentation.newrelic.com/inject-python: "newrelic"
-    Instrumentation CR → NR Python agent を init container として自動注入
-  ↓ NR Python agent が FastAPI を自動計装
-  → New Relic APM（APM + Distributed Tracing + Service Maps）
-  → New Relic Kubernetes（nri-bundle DaemonSet）
-  → New Relic Logs（Fluent Bit）
-```
-
-### 2 つのパスの独立性
-
-| | CloudWatch path | New Relic path |
-|--|--|--|
-| **注入 Operator** | OTel Operator（CW addon 内蔵） | k8s-agents-operator（nri-bundle） |
-| **注入アノテーション** | `instrumentation.opentelemetry.io/inject-python: "true"` | `instrumentation.newrelic.com/inject-python: "newrelic"` |
-| **エージェント** | ADOT（OTel SDK + AWS Distro） | New Relic Python APM agent |
-| **データ送信先** | CloudWatch（AWS リージョン内） | New Relic（SaaS） |
-| **namespace** | `demo-ec2` / `demo-fargate` | `demo-newrelic` |
-| **アプリイメージ** | 同一 | 同一 |
-
-2 つのパスは完全に独立。OTel のデータが New Relic に流れ込むことはなく、逆もない。
-
----
-
-## 2. 全体構成図
+## 1. アーキテクチャ概要
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │  EKS Cluster (obs-poc) — ap-northeast-1                             │
 │                                                                     │
 │  ┌──────────────────────────────────────────────────────────────┐   │
-│  │  EC2 Node (t3.medium)                                        │   │
+│  │  EC2 Node (t3.small × 2)                                     │   │
 │  │                                                              │   │
 │  │  namespace: demo-ec2 (CloudWatch path)                       │   │
-│  │  ┌──────────────┐  ┌─────┐  ┌─────────┐  ┌──────────┐      │   │
-│  │  │ frontend-ui  │  │ bff │  │order-api│  │ ...      │      │   │
-│  │  │ [OTel SDK]   │  │[OTel│  │ [OTel]  │  │ [OTel]   │      │   │
-│  │  └──────┬───────┘  └──┬──┘  └────┬────┘  └────┬─────┘      │   │
-│  │         └─────────────┴──────────┴─────────────┘            │   │
-│  │                        OTLP (4317)                           │   │
-│  │                            ↓                                 │   │
+│  │                                                              │   │
+│  │  ┌─────────────┐  HTTP  ┌────────────┐                       │   │
+│  │  │ netwatch-ui │ ──────→│ device-api │                       │   │
+│  │  │  (FastAPI   │        │ (FastAPI + │                       │   │
+│  │  │  +Jinja2)   │ ──────→│  SQLite)   │                       │   │
+│  │  │  [OTel SDK] │        │ [OTel SDK] │                       │   │
+│  │  │  LoadBalancer│  HTTP  └────────────┘                       │   │
+│  │  └──────┬──────┘        ┌────────────┐                       │   │
+│  │         └──────────────→│ alert-api  │                       │   │
+│  │                         │ (FastAPI)  │                       │   │
+│  │                         │ [OTel SDK] │                       │   │
+│  │                         └────────────┘                       │   │
+│  │                              OTLP (gRPC :4315)               │   │
+│  │                                    ↓                         │   │
 │  │  namespace: amazon-cloudwatch                                │   │
-│  │  ┌──────────────────────┐                                    │   │
-│  │  │ CloudWatch Agent     │ → Application Signals / X-Ray      │   │
-│  │  │ (ADOT)               │ → CloudWatch Metrics               │   │
-│  │  └──────────────────────┘                                    │   │
+│  │  ┌────────────────────────┐                                  │   │
+│  │  │ CloudWatch Agent(ADOT) │──→ Application Signals / X-Ray   │   │
+│  │  │                        │──→ CloudWatch Metrics            │   │
+│  │  └────────────────────────┘                                  │   │
 │  │  ┌──────────┐                                                │   │
-│  │  │Fluent Bit│ → CloudWatch Logs                              │   │
+│  │  │Fluent Bit│──→ CloudWatch Logs                             │   │
 │  │  └──────────┘                                                │   │
-│  │                                                              │   │
-│  │  namespace: demo-newrelic (New Relic path)                   │   │
-│  │  ┌──────────────┐  ┌─────┐  ┌─────────┐  ┌──────────┐      │   │
-│  │  │ frontend-ui  │  │ bff │  │order-api│  │ ...      │      │   │
-│  │  │ [NR agent]   │  │ [NR]│  │  [NR]   │  │  [NR]    │      │   │
-│  │  └──────┬───────┘  └──┬──┘  └────┬────┘  └────┬─────┘      │   │
-│  │         └─────────────┴──────────┴─────────────┘            │   │
-│  │                    NR agent protocol                         │   │
-│  │                            ↓                                 │   │
-│  │                    New Relic APM (SaaS)                      │   │
-│  │                                                              │   │
-│  │  namespace: newrelic                                         │   │
-│  │  ┌────────────────────────────────────────────┐             │   │
-│  │  │ nri-bundle: infra DaemonSet + k8s-agents-  │             │   │
-│  │  │ operator + Fluent Bit + kube-state-metrics  │             │   │
-│  │  └────────────────────────────────────────────┘             │   │
 │  └──────────────────────────────────────────────────────────────┘   │
-│                                                                     │
-│  Fargate Profile → namespace: demo-fargate                          │
-│  (CloudWatch path のみ。NR DaemonSet は Fargate 非対応)              │
 └─────────────────────────────────────────────────────────────────────┘
+
+ブラウザ ──→ ELB (LoadBalancer) ──→ netwatch-ui
+                                        ↓ httpx (async)
+                                   device-api / alert-api
+                                        ↓ OTLP
+                               CloudWatch Agent (4315)
+                                        ↓
+                            Application Signals / X-Ray
 ```
 
 ---
 
-## 3. 作成される AWS リソース一覧
+## 2. アプリケーション構成（NetWatch）
+
+NetWatch は大手キャリアがネットワーク機器を監視する想定のシステムです。
+
+### サービス一覧
+
+| サービス | 役割 | ポート | 外部公開 |
+|---------|------|--------|---------|
+| **netwatch-ui** | ダッシュボード UI (FastAPI + Jinja2 + Tailwind CSS) | 8080 | ◎ LoadBalancer |
+| **device-api** | ネットワーク機器 CRUD・フィルタ・カオス制御 | 8000 | × ClusterIP |
+| **alert-api** | アラート管理・アラートストーム生成 | 8000 | × ClusterIP |
+
+### 搭載データ
+
+| 分類 | 内容 |
+|-----|-----|
+| **エリア** | 東京・大阪・名古屋・福岡・札幌 |
+| **機器タイプ** | core_router, edge_router, l3_switch, l2_switch, firewall, load_balancer, access_point |
+| **ステータス** | active, warning, critical, offline, maintenance |
+| **初期台数** | 30 台 |
+| **初期アラート** | 7 件（severity: critical / warning / info） |
+
+### 画面一覧
+
+| 画面 | URL | 内容 |
+|-----|-----|-----|
+| ダッシュボード | `/` | ステータスサマリ・エリア分布・最近のアラート |
+| 機器一覧 | `/devices` | エリア・タイプ・ステータス・フリーワードで絞り込み |
+| 機器詳細 | `/devices/{id}` | 機器情報・メトリクスバー・関連アラート |
+| アラート一覧 | `/alerts` | 重大度・エリアフィルタ・解決ボタン |
+| カオスコントロール | `/chaos` | カオスシナリオのON/OFFとCloudWatch調査ガイド |
+
+### サービス間呼び出し（トレース生成源）
+
+```
+netwatch-ui:8080  ──GET /devices{?filters}──→  device-api:8000
+netwatch-ui:8080  ──GET /devices/{id}──────→  device-api:8000
+netwatch-ui:8080  ──GET /alerts{?filters}──→  alert-api:8000
+netwatch-ui:8080  ──POST /chaos/*──────────→  device-api:8000 または alert-api:8000
+device-api:8000   ──POST /chaos/*───────────→  (自身のカオス状態を変更)
+```
+
+httpx の非同期 HTTP クライアントが W3C TraceContext ヘッダーを自動伝播するため、
+netwatch-ui → downstream のスパンが1本のトレースに結合されます。
+
+---
+
+## 3. 計装アーキテクチャ
+
+### 「アプリに手を加えない」の定義
+
+| 対象 | 変更有無 | 内容 |
+|------|---------|------|
+| `app.py` | **変更なし** | 純粋な FastAPI。OTel の import なし |
+| `Dockerfile` | **変更なし** | `uvicorn` で起動するだけ |
+| `requirements.txt` | **変更なし** | `fastapi`, `uvicorn`, `httpx`, `python-json-logger` のみ |
+| K8s Deployment annotation | インフラ設定 | `instrumentation.opentelemetry.io/inject-python: "true"` |
+| K8s Namespace annotation | インフラ設定 | OTel Operator が参照する注入トリガー |
+
+### 計装フロー
+
+```
+EKS Add-on: amazon-cloudwatch-observability
+  └─ OTel Operator: Namespace に inject-python アノテーションを検出
+       └─ Init Container: opentelemetry-auto-instrumentation-python を注入
+            └─ PYTHONPATH に sitecustomize.py を追加
+                 ├─ FastAPI の全ルート → HTTPサーバースパン自動生成
+                 ├─ httpx の全外部呼び出し → HTTPクライアントスパン自動生成
+                 └─ W3C TraceContext ヘッダー自動伝播
+
+スパン送信先:
+  OTLP gRPC → cloudwatch-agent.amazon-cloudwatch:4315
+    → CloudWatch Application Signals（APM・サービスマップ・SLO）
+    → AWS X-Ray（分散トレース）
+
+ログ:
+  stdout（JSON 構造化）→ Fluent Bit → CloudWatch Logs
+    /aws/containerinsights/obs-poc/application
+
+メトリクス:
+  Container Insights → CloudWatch Metrics
+```
+
+---
+
+## 4. 作成される AWS リソース一覧
 
 | カテゴリ | リソース | 用途 |
 |---------|---------|------|
 | **EKS** | Cluster (obs-poc) | メインクラスター |
-| | Managed Node Group (t3.medium × 1) | EC2 path 実行環境 |
-| | Fargate Profile | demo-fargate namespace |
+| | Managed Node Group (t3.small × 2) | EC2 path 実行環境 |
 | | EKS Add-on: amazon-cloudwatch-observability | OTel Operator + ADOT + Fluent Bit |
-| **ECR** | 6 リポジトリ | アプリイメージ |
-| **IAM** | IRSA ロール (app-signals-sa) | EC2/Fargate → CloudWatch/X-Ray |
-| | IRSA ロール (newrelic-integration) | NR → CloudWatch Metrics polling |
+| **ECR** | netwatch-ui, device-api, alert-api（計3リポジトリ） | アプリイメージ |
+| **IAM** | IRSA ロール (app-signals-sa) | EC2 → CloudWatch / X-Ray |
 | **VPC** | VPC + Subnet + SG | ネットワーク基盤 |
 | | Interface Endpoints (ecr.api, ecr.dkr, logs, sts, monitoring, xray) | NAT 不使用 |
 | **CloudWatch** | Application Signals | APM・サービスマップ・SLO |
 | | Container Insights | K8s メトリクス |
-| | Log Groups | アプリ・システムログ |
-| | RUM App Monitor | フロントエンド監視 |
-| | Synthetics Canary | 死活監視 |
+| | Log Groups (/aws/containerinsights/obs-poc/application など) | アプリ・システムログ |
+| | RUM App Monitor | フロントエンド監視（オプション） |
+| | Synthetics Canary | 死活監視（オプション） |
 
 ---
 
-## 4. 費用概算
+## 5. 費用概算
 
 | リソース | 時間単価 | 月額概算 |
 |---------|---------|---------|
 | EKS クラスター | $0.10/h | ~$75 |
-| EC2 t3.medium × 1 | $0.052/h | ~$38 |
-| Fargate (0.25vCPU × 0.5GB × 6 pods) | ~$0.02/h | ~$15 |
-| Application Signals (トレース) | 従量 | ~$5–20 |
+| EC2 t3.small × 2 | $0.023/h × 2 | ~$35 |
+| Application Signals (トレース) | 従量 | ~$5–15 |
 | Container Insights | 従量 | ~$5–10 |
 | CloudWatch Logs | 従量 | ~$3–5 |
-| RUM + Synthetics | 従量 | ~$3–5 |
-| **合計（概算）** | | **~$150–170/月** |
+| RUM + Synthetics（オプション） | 従量 | ~$3–5 |
+| **合計（概算）** | | **~$125–145/月** |
 
-> **注意**: New Relic は別途サブスクリプション費用が発生します。PoC 終了後は `make down` で即削除してください。
-
----
-
-## 5. サンプルアプリの構成
-
-```
-frontend-ui          → backend-for-frontend (BFF)
-                              ↓
-                    ┌─────────┬──────────┬──────────────────────┐
-                    ↓         ↓          ↓                      ↓
-                order-api  inventory-api  payment-api  external-api-simulator
-```
-
-| サービス | 役割 | 外部呼び出し |
-|---------|------|------------|
-| frontend-ui | HTML UI / 静的アセット | BFF |
-| backend-for-frontend | API 集約・シナリオ制御 | order, inventory, payment, external |
-| order-api | 注文処理 | external |
-| inventory-api | 在庫管理 | external |
-| payment-api | 決済処理 | external |
-| external-api-simulator | サードパーティ API 模擬 | — |
-
-全サービス: Python FastAPI + uvicorn。アプリコードに計装なし。
+> PoC 終了後は `make down` で即削除してください。
 
 ---
 
-## 6. トレース分析用シナリオ
-
-frontend-ui / BFF の `/api/checkout/{scenario}` エンドポイントで各シナリオをトリガー。
-
-| シナリオ | 説明 | 期待される観測 |
-|---------|------|--------------|
-| `normal` | 全 API 正常呼び出し | 全スパン成功、通常レイテンシ |
-| `slow-payment` | payment-api に意図的遅延（2–5s） | payment スパンのレイテンシ異常 |
-| `slow-inventory` | inventory-api に意図的遅延 | inventory スパンのレイテンシ異常 |
-| `payment-error` | payment-api が 500 エラー | エラースパン、サービスマップ上の赤色エッジ |
-| `external-slow` | external-api-simulator がタイムアウト | タイムアウトスパン検知 |
-| `random` | 上記シナリオをランダム実行 | 混在トラフィックでのサービスマップ確認 |
-
----
-
-## 7. クイックスタート
+## 6. クイックスタート（CloudWatch フェーズ）
 
 ### 前提条件
 
@@ -231,29 +209,13 @@ docker version      # >= 24.x
 cp .env.example .env
 ```
 
-**make up 前に設定する項目**:
+**最低限設定する項目**:
 
 ```bash
-# New Relic (Administration > API keys で取得)
-NEW_RELIC_LICENSE_KEY=...     # INGEST - LICENSE タイプ
-NEW_RELIC_API_KEY=NRAK-...    # USER タイプ（NRAK- で始まる）
-NEW_RELIC_ACCOUNT_ID=...      # アカウント番号
-NEW_RELIC_REGION=US           # one.newrelic.com → US / one.eu.newrelic.com → EU
-
-# AWS
 AWS_REGION=ap-northeast-1
-AWS_ACCOUNT_ID=...            # 12 桁のアカウント番号
+AWS_ACCOUNT_ID=123456789012   # 12桁のアカウント番号
 CLUSTER_NAME=obs-poc
 ```
-
-**make up 後に terraform output で追記する項目**:
-
-```bash
-echo "CW_RUM_APP_MONITOR_ID=$(terraform -chdir=infra/terraform output -raw rum_app_monitor_id)" >> .env
-echo "CW_RUM_IDENTITY_POOL_ID=$(terraform -chdir=infra/terraform output -raw cognito_identity_pool_id)" >> .env
-```
-
-**EC2_BASE / FARGATE_BASE / NEWRELIC_BASE / SYNTHETICS_CANARY_URL はアプリデプロイ後に設定する**（手順 11 参照）。
 
 ### 手順
 
@@ -261,97 +223,150 @@ echo "CW_RUM_IDENTITY_POOL_ID=$(terraform -chdir=infra/terraform output -raw cog
 # 1. EKS クラスター・AWS リソース作成（~20 分）
 make up
 
-# 2. terraform output を .env に追記
-echo "CW_RUM_APP_MONITOR_ID=$(terraform -chdir=infra/terraform output -raw rum_app_monitor_id)" >> .env
-echo "CW_RUM_IDENTITY_POOL_ID=$(terraform -chdir=infra/terraform output -raw cognito_identity_pool_id)" >> .env
-
-# 3. K8s secrets 作成
-make create-secrets
-
-# 4. Docker イメージビルド & ECR push
+# 2. Docker イメージビルド & ECR push
 make build-push
 
-# ── CloudWatch path ──────────────────────────────────────────
-# 5. CloudWatch スタックセットアップ（OTel Operator 有効化・アノテーション付与）
+# 3. CloudWatch スタックセットアップ（OTel Operator・アノテーション付与）
 make install-cloudwatch-full
 
-# 6. アプリデプロイ (EC2 → demo-ec2 namespace)
+# 4. アプリデプロイ（demo-ec2 namespace）
 make deploy-ec2
 
-# 7. アプリデプロイ (Fargate → demo-fargate namespace)
-make deploy-fargate
+# 5. ELB URL の払い出しを待つ（1〜2 分）
+kubectl get svc netwatch-ui -n demo-ec2 -w
 
-# ── New Relic path ───────────────────────────────────────────
-# 8. New Relic スタックセットアップ（nri-bundle + k8s-agents-operator）
-make install-newrelic-full
-
-# 9. アプリデプロイ (New Relic path → demo-newrelic namespace)
-make deploy-newrelic
-
-# ── URL 取得・ブラウザ確認 ────────────────────────────────────
-# 10. ELB hostname の払い出しを待つ（1〜2 分）
-kubectl get svc frontend-ui -n demo-ec2 -w      # EXTERNAL-IP が表示されたら Ctrl+C
-
-# 11. 各 namespace の ELB URL を .env に追記
-EC2_LB=$(kubectl get svc frontend-ui -n demo-ec2 \
+# 6. .env に EC2_BASE を追記
+EC2_LB=$(kubectl get svc netwatch-ui -n demo-ec2 \
   -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-FARGATE_LB=$(kubectl get svc frontend-ui -n demo-fargate \
-  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-NR_LB=$(kubectl get svc frontend-ui -n demo-newrelic \
-  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-
 echo "EC2_BASE=http://${EC2_LB}" >> .env
-echo "FARGATE_BASE=http://${FARGATE_LB}" >> .env
-echo "NEWRELIC_BASE=http://${NR_LB}" >> .env
 
-# 12. Synthetics Canary の監視対象 URL を設定して terraform apply
+# 7. ブラウザで確認
 source .env
-terraform -chdir=infra/terraform apply -auto-approve \
-  -var="new_relic_license_key=${NEW_RELIC_LICENSE_KEY}" \
-  -var="new_relic_account_id=${NEW_RELIC_ACCOUNT_ID}" \
-  -var="synthetics_canary_url=${EC2_BASE}"
+open ${EC2_BASE}
 
-# 13. ブラウザでアプリを開いて動作確認
-#     各 URL でショッピングシナリオを手動操作すると即座にトレースが生成される
-open ${EC2_BASE}      # CloudWatch path (EC2) — demo-ec2 namespace
-open ${FARGATE_BASE}  # CloudWatch path (Fargate) — demo-fargate namespace
-open ${NR_LB}         # New Relic path — demo-newrelic namespace
-
-# ── トラフィック生成 ──────────────────────────────────────────
-# 14. 自動負荷生成（EC2 / Fargate / New Relic 全 path に全シナリオを送信）
-#     EC2_BASE・FARGATE_BASE は .env から自動読み込み
+# 8. 負荷生成（トレース・メトリクス生成）
 make load
-# New Relic path にも同じシナリオを送信
-source .env
-for scenario in checkout/normal checkout/slow-payment checkout/slow-inventory \
-                checkout/payment-error checkout/external-slow checkout/random; do
-  curl -s "${NEWRELIC_BASE}/api/${scenario}" > /dev/null
-  sleep 1
-done
 
-# ── 結果確認 ─────────────────────────────────────────────────
-# 15. ステータス確認
+# 9. ステータス確認
 make status
-
-# 16. 比較チェックリスト表示
-make compare-check
 ```
-
-> **観測データが出るまでの目安**: `make load` 実行後 2〜3 分で CloudWatch Application Signals・New Relic APM 双方にトレース・メトリクスが表示される。
-> 詳細な確認手順はセクション 8〜14 を参照。
 
 ### 計装の確認
 
 ```bash
-# CloudWatch path: OTel SDK init container が注入されているか確認
-kubectl get pod -n demo-ec2 -l app=frontend-ui \
+# OTel SDK init container が注入されているか確認
+kubectl get pod -n demo-ec2 -l app=netwatch-ui \
   -o jsonpath='{.items[0].spec.initContainers[*].name}'
 # 期待値: opentelemetry-auto-instrumentation-python
 
-# New Relic path: NR agent init container が注入されているか確認
-kubectl get pod -n demo-newrelic -l app=frontend-ui \
-  -o jsonpath='{.items[0].spec.initContainers[*].name}'
-# 期待値: newrelic-instrumentation-python (または類似名)
+# CloudWatch Application Signals にサービスが表示されているか確認
+aws cloudwatch list-metrics \
+  --namespace ApplicationSignals \
+  --dimensions Name=Service,Value=netwatch-ui \
+  --region ap-northeast-1 \
+  --query 'Metrics[*].MetricName' \
+  --output text
+```
+
+---
+
+## 7. カオスシナリオ — ハンズオン学習ガイド
+
+`{EC2_BASE}/chaos` のカオスコントロール画面、またはカオスシナリオ終了後にコンソールで確認します。
+
+### シナリオ 1: スロークエリ（レイテンシ異常の検知）
+
+**目的**: Application Signals の P99 レイテンシ急増を体験する
+
+**操作**（カオス画面 → "Slow Query ON" ボタン、または）:
+```bash
+source .env
+curl -X POST "${EC2_BASE}/api/chaos/slow-query" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": true, "slow_ms": 3000}'
+make load    # 負荷生成
+```
+
+**CloudWatch で確認すること**:
+
+| コンソール | 確認ポイント |
+|-----------|------------|
+| Application Signals > Services > device-api | Latency (P99) が 3s 超に急増しているか |
+| Application Signals > Service Map | device-api ノードの色が変化しているか |
+| X-Ray > Traces > Filter: duration > 2s | 遅延トレースの内訳でどのスパンが長いか |
+| CloudWatch Logs Insights | `filter @duration > 2000` でスロークエリログを特定 |
+
+**復旧**:
+```bash
+curl -X POST "${EC2_BASE}/api/chaos/reset"
+```
+
+---
+
+### シナリオ 2: エラーインジェクション（エラー率モニタリング）
+
+**目的**: Application Signals のエラー率グラフと Log Insights を使ったエラー分析を体験する
+
+**操作**（カオス画面 → "Error Inject (30%)" ボタン、または）:
+```bash
+source .env
+curl -X POST "${EC2_BASE}/api/chaos/error-inject" \
+  -H "Content-Type: application/json" \
+  -d '{"error_rate": 30}'
+make load
+```
+
+**CloudWatch で確認すること**:
+
+| コンソール | 確認ポイント |
+|-----------|------------|
+| Application Signals > Services > device-api | Error/Fault 率が約 30% に達しているか |
+| Application Signals > Service Map | エッジ（矢印）がエラー状態を示す色に変わるか |
+| X-Ray > Traces > Filter: error = true | 500 エラートレースのスパン詳細を確認 |
+| CloudWatch Logs Insights | 下記クエリでエラーログを集計 |
+
+```sql
+fields @timestamp, service_name, level, message, status_code
+| filter level = "ERROR"
+| sort @timestamp desc
+| limit 50
+```
+
+**復旧**:
+```bash
+curl -X POST "${EC2_BASE}/api/chaos/reset"
+```
+
+---
+
+### シナリオ 3: アラートストーム（ログボリューム急増の検知）
+
+**目的**: 異常なログボリューム増加を Container Insights と Logs Insights で捕捉する体験
+
+**操作**（カオス画面 → "Alert Storm" ボタン、または）:
+```bash
+source .env
+curl -X POST "${EC2_BASE}/api/chaos/alert-storm"
+```
+
+**CloudWatch で確認すること**:
+
+| コンソール | 確認ポイント |
+|-----------|------------|
+| CloudWatch Logs > Log groups | /aws/containerinsights/obs-poc/application のインジェストバイト急増 |
+| CloudWatch Logs Insights | `stats count(*) by bin(1m)` でログ件数の急増タイミングを確認 |
+| Application Signals > alert-api | スループットの急増が見えるか |
+
+```sql
+fields @timestamp, service_name, severity, message
+| filter service_name = "alert-api"
+| stats count(*) as cnt by bin(1m)
+| sort @timestamp asc
+```
+
+**復旧**:
+```bash
+curl -X POST "${EC2_BASE}/api/chaos/reset"
 ```
 
 ---
@@ -366,423 +381,156 @@ https://ap-northeast-1.console.aws.amazon.com/cloudwatch/home?region=ap-northeas
 
 ### 確認項目
 
-| 観点 | 確認内容 | コンソール |
-|------|---------|-----------|
-| サービス一覧 | 6 サービスが自動検出されているか | Application Signals > Services |
-| サービスマップ | 呼び出し依存グラフが自動生成されているか | Application Signals > Service Map |
-| SLO | フロントエンドに SLO を設定できるか | Application Signals > SLOs |
-| レイテンシ | p50/p90/p99 が表示されるか | Service > Metrics |
-| エラー率 | 4xx/5xx エラー率 | Service > Metrics |
-| 分散トレース | X-Ray トレースマップ・スパン詳細 | X-Ray > Traces |
-| K8s メトリクス | Pod CPU・メモリ | Container Insights |
-| ログ | JSON 構造化ログ | CloudWatch Logs |
+| 観点 | 確認内容 | コンソールパス |
+|------|---------|---------------|
+| **サービス一覧** | netwatch-ui / device-api / alert-api が自動検出されているか | Application Signals > Services |
+| **サービスマップ** | UI → device-api / alert-api の呼び出し依存グラフが自動生成されているか | Application Signals > Service Map |
+| **SLO** | netwatch-ui や device-api に SLO（可用性 99.9%, レイテンシ P99 < 1s）を設定する | Application Signals > SLOs |
+| **レイテンシ** | P50 / P90 / P99 の時系列グラフ | Service > Operations |
+| **エラー率** | 4xx / 5xx の時系列グラフ | Service > Operations |
+| **分散トレース** | X-Ray トレースマップ・スパン詳細・サービス間の因果関係 | X-Ray > Traces |
 
-### OTel 自動計装で取れるもの（コード変更なし）
+### Application Signals で自動的に取れるもの（コード変更なし）
 
-- HTTP リクエスト/レスポンスのスパン（FastAPI, httpx）
-- W3C TraceContext・Baggage の自動伝播
-- HTTP ステータスコード・URL・メソッド
-- Python ランタイムメトリクス（CPU, GC など）
+- FastAPI の全ルートの HTTP サーバースパン（メソッド・URL・ステータスコード付き）
+- httpx による下流 API 呼び出しの HTTP クライアントスパン
+- W3C TraceContext による自動トレース伝播（netwatch-ui → device-api/alert-api が1本のトレースに）
+- Python ランタイムメトリクス
+
+### トレース分析の基本操作
+
+```
+X-Ray > Traces
+  └─ Filter: service("netwatch-ui")
+       └─ 遅いトレースを選択 → Trace Map でスパン間の時間を確認
+            └─ device-api のスパンを展開 → どのエンドポイントで詰まっているか
+```
 
 ---
 
-## 9. Container Insights で確認する観点
+## 9. CloudWatch Logs で確認する観点
+
+### Log Group
 
 ```
-CloudWatch > Container Insights > Performance monitoring
+/aws/containerinsights/obs-poc/application   ← アプリ JSON ログ
+/aws/containerinsights/obs-poc/performance   ← Container Insights パフォーマンスログ
+/aws/containerinsights/obs-poc/dataplane     ← K8s コントロールプレーンログ
 ```
 
-| 確認内容 | 見るべき指標 |
-|---------|------------|
-| Node レベル | CPU, Memory, Network I/O |
-| Pod レベル | CPU throttling, Memory limits |
-| Namespace レベル | demo-ec2 / demo-fargate の比較 |
+### Logs Insights クエリ例
 
----
-
-## 10. CloudWatch Logs で確認する観点
-
-```
-CloudWatch > Log groups
-  /aws/containerinsights/obs-poc/application  → アプリログ (JSON)
-  /aws/containerinsights/obs-poc/performance  → パフォーマンスログ
-```
-
-- JSON 構造化ログ（service_name, level, message, timestamp）
-- Logs Insights での集計クエリ例:
-
-```
+**エラーログ集計**:
+```sql
 fields @timestamp, service_name, level, message
 | filter level = "ERROR"
 | sort @timestamp desc
 | limit 50
 ```
 
----
-
-## 11. New Relic APM で確認する観点
-
-### コンソール URL
-
-```
-https://one.newrelic.com/apm
+**レイテンシ分布（スロークエリ検知）**:
+```sql
+fields @timestamp, service_name, duration_ms, path
+| filter duration_ms > 1000
+| sort duration_ms desc
+| limit 20
 ```
 
-### 確認項目
-
-| 観点 | 確認内容 | コンソール |
-|------|---------|-----------|
-| サービス一覧 | 6 サービスが自動検出されているか | APM > Summary |
-| サービスマップ | 依存グラフ（エラー・レイテンシ付き） | APM > Service Map |
-| Distributed Tracing | エンドツーエンドトレース | Distributed Tracing |
-| Transaction | 遅いトランザクション・エラー | APM > Transactions |
-| Errors Inbox | エラーのグルーピング・根本原因 | APM > Errors Inbox |
-| SLI/SLO | サービスレベル目標設定 | APM > Service Levels |
-| Apdex | ユーザー体感スコア | APM > Summary |
-| Logs in Context | トレースに紐付いたログ | APM > Logs |
-
-### NR Python agent で取れるもの（コード変更なし）
-
-- FastAPI ルートごとのトランザクション追跡
-- 外部 HTTP 呼び出し（httpx）のスパン
-- 分散トレース（W3C TraceContext + NR 独自ヘッダー）
-- Python ランタイムメトリクス
-- エラーの stack trace 自動取得
-- Logs in Context（ログと APM の自動紐付け）
-
-### APM 特化機能（CW との有意差が出やすい箇所）
-
-**Transaction Traces**
+**サービス別ログ件数（アラートストーム確認）**:
+```sql
+fields @timestamp, service_name
+| stats count(*) as cnt by service_name, bin(1m)
+| sort @timestamp asc
 ```
-APM > [service] > Transaction Traces
-```
-- 設定したしきい値（デフォルト Apdex T × 4）を超えた実行を自動キャプチャ
-- Breakdown Table: FastAPI ルート・httpx 呼び出しごとの時間内訳
-- `checkout/slow-payment` 実行後、payment-api スパンがどの関数で遅いかを確認
 
-**Errors Inbox**
+**trace_id でのログ→トレース紐付け**:
+```sql
+fields @timestamp, trace_id, message, level
+| filter trace_id = "1-xxxxxxxx-xxxxxxxxxxxxxxxxxxxx"
 ```
-APM > [service] > Errors Inbox
-```
-- stack trace fingerprint でエラーを自動グルーピング（同種エラーをまとめて表示）
-- occurrence count, First seen / Last seen が自動記録
-- Resolved / Ignored / Assigned でステータス管理（チームでのトリアージが可能）
-- `checkout/payment-error` を繰り返し実行してグルーピングを確認
 
-**External Services**
-```
-APM > [service] > External services
-```
-- `external-api-simulator` への呼び出しが呼び出し元サービスごとに内訳表示
-- レスポンスタイムの分布・スループット・エラー率を外部サービス単位で確認
-
-**Apdex**
-- ユーザー体感スコア（0–1）がサービスサマリに常時表示
-- `slow-payment` 実行で Apdex が下がるタイミングを確認（CW には相当機能なし）
+> ヒント: X-Ray でトレースを見つけたら trace_id をコピーして上記クエリで実行すると、
+> そのトレースに対応するアプリログを即座に特定できます。
 
 ---
 
-## 12. New Relic Kubernetes で確認する観点
+## 10. Container Insights で確認する観点
 
 ```
-https://one.newrelic.com/kubernetes
+CloudWatch > Container Insights > Performance monitoring
+クラスター: obs-poc
 ```
 
 | 確認内容 | 見るべき指標 |
 |---------|------------|
-| Cluster Explorer | Pod・Node・Namespace の可視化 |
-| Node 利用率 | CPU・Memory |
-| Pod ステータス | demo-newrelic namespace の Pod |
-| K8s Events | エラーイベント検出 |
+| Node レベル | CPU 使用率・Memory 使用率・Network I/O |
+| Pod レベル | CPU throttling・Memory 上限接近 |
+| Namespace レベル | demo-ec2 の Pod 全体のリソース消費 |
+
+カオスシナリオ実行中は CPU・メモリが微増するため、負荷と Container Insights の相関を確認してください。
 
 ---
 
-## 13. New Relic Logs で確認する観点
+## 11. New Relic フェーズ（フェーズ 2・準備中）
+
+CloudWatch での観測に慣れた後、同一アプリイメージを使って New Relic APM と比較します。
+
+### フェーズ 2 の計画
 
 ```
-https://one.newrelic.com/logger
+# New Relic path（別 namespace で同一イメージを使用）
+kubectl create namespace demo-newrelic
+
+# k8s-agents-operator（nri-bundle に含まれる）を使って NR Python agent を自動注入
+# annotation: instrumentation.newrelic.com/inject-python: "newrelic"
+make install-newrelic-full
+make deploy-newrelic
 ```
 
-- `environment:demo-newrelic` でフィルタ
-- APM との Logs in Context（トレース ID でログ検索）
-- NRQL でのログ集計:
+### フェーズ 2 で比較する観点
 
-```sql
-SELECT count(*) FROM Log
-WHERE environment = 'demo-newrelic'
-FACET service_name, level
-SINCE 1 hour ago
-```
-
----
-
-## 14. APM 機能有意差の重点確認シナリオ
-
-New Relic は APM ツールに特化しているため、以下のシナリオで CloudWatch との**機能的有意差**が現れやすい。
-同一トラフィックを発生させ、両ツールが何をどこまで見せるかを実機で比較する。
-
-### シナリオ A: エラー分析の深度
-
-**操作**（`source .env` で EC2_BASE を読み込んでから実行）:
-```bash
-source .env
-for i in $(seq 1 25); do curl -s ${EC2_BASE}/api/checkout/payment-error > /dev/null; done
-```
-
-| 観点 | CloudWatch (X-Ray) | New Relic (Errors Inbox) |
-|------|-------------------|--------------------------|
-| エラーのグルーピング | なし。個別トレースをフィルタして目視 | stack trace fingerprint で自動グルーピング |
-| stack trace の取得 | スパン属性で部分的 | Python 全 stack trace を自動キャプチャ |
-| 発生回数・初回/最終発生 | 手動で時系列検索 | occurrence count, first/last seen が自動記録 |
-| 担当者アサイン・ステータス管理 | なし | Errors Inbox で Resolved / Ignored / Assigned |
-
-- **CW**: X-Ray > Traces > `Filter: Error = true` で個別トレースを目視
-- **NR**: APM > [payment-api] > Errors Inbox でグルーピング済みエラーを確認
-
----
-
-### シナリオ B: 遅いトランザクションの自動検出
-
-**操作**:
-```bash
-source .env
-for i in $(seq 1 30); do curl -s ${EC2_BASE}/api/checkout/slow-payment > /dev/null; done
-```
-
-| 観点 | CloudWatch (X-Ray) | New Relic (Transaction Traces) |
-|------|-------------------|---------------------------------|
-| 遅い実行の自動キャプチャ | なし。手動で duration フィルタして探す | しきい値超えの実行を Transaction Traces に自動保存 |
-| 内訳の粒度 | HTTP スパン単位 | Breakdown Table で FastAPI ルート・httpx 呼び出しごとの時間 |
-| どこで時間を使ったか | スパン間の空白時間は不明 | 各関数の占有時間をパーセンテージで表示 |
-| しきい値アラート | メトリクス名を特定して CloudWatch Alarm | `percentile(duration, 99) > 2000` をそのままアラート条件に |
-
-- **CW**: X-Ray > Traces > Sort by duration 降順 → 手動で遅いトレースを探す
-- **NR**: APM > [backend-for-frontend] > Transaction Traces > Slowest traces
-
----
-
-### シナリオ C: Logs in Context の操作性
-
-**操作**: 任意のシナリオで負荷をかけ、トレース詳細画面からログへの到達手順を両ツールで比較する
-
-| 観点 | CloudWatch | New Relic |
+| 機能 | CloudWatch | New Relic |
 |------|-----------|-----------|
-| トレース → ログへの移動 | trace_id を手動コピー → Logs Insights で検索クエリを書く | トレース詳細の "Logs" タブを1クリック |
-| スパン上にログをマッピング | なし | スパンの時刻範囲内のログをタイムライン上に重ねて表示 |
-| エラーログの APM サマリへの浮上 | なし | エラー件数が APM サービスサマリに自動カウント |
-| ログ → トレースへの逆引き | trace_id でログを検索し X-Ray で再検索（2操作） | ログエントリから "View span in APM" で直接ジャンプ |
-
-確認手順（NR 側）:
-1. APM > [payment-api] > Distributed Tracing でエラートレースを選択
-2. スパンを選択 → "Logs" タブ → そのスパンに紐付いたログが表示されるか確認
-3. NR Logs でログエントリを選択 → "View span in APM" で逆引きナビゲーション
+| サービスマップの情報量 | レイテンシ・エラー率 | Apdex・スループット・エラー率・レイテンシ |
+| エラー分析 | 個別トレースを目視 | Errors Inbox（自動グルーピング・stack trace） |
+| 遅いトランザクション | 手動フィルタ | Transaction Traces（自動キャプチャ・Breakdown） |
+| ログとトレースの紐付け | trace_id で手動検索（2ステップ） | Logs in Context（1クリック） |
+| アラート条件の定義 | メトリクスアラーム | NRQL 1行でそのままアラート化 |
 
 ---
 
-### シナリオ D: サービスマップの情報密度
+## 12. 機能差比較表
 
-**操作**: `make load` で全シナリオ混在のトラフィックを発生させた状態でサービスマップを比較
-
-| 観点 | CloudWatch App Signals | New Relic APM |
-|------|------------------------|---------------|
-| ノードの情報量 | レイテンシ・エラー率 | Apdex・スループット・エラー率・レイテンシが1ノードに集約 |
-| ユーザー体感スコア | なし | Apdex（0–1 のスコアで劣化が直感的に見える） |
-| 外部サービスの可視性 | external-api-simulator が依存として表示 | External Services ページ: 呼び出し元ごとの response time breakdown |
-
----
-
-### シナリオ E: アラート定義の柔軟性
-
-同じアラート条件を両ツールで設定し、定義のしやすさを比較する
-
-| 条件例 | CloudWatch | New Relic NRQL アラート |
-|--------|-----------|------------------------|
-| payment-api の p99 レイテンシ > 2 秒 | App Signals メトリクスを特定してアラーム設定 | `SELECT percentile(duration,99) FROM Transaction WHERE appName='payment-api'` |
-| エラー率 5% 超え | X-Ray フィルタグループ + アラーム | `SELECT percentage(count(*), WHERE error IS true) FROM Transaction` |
-| 特定エンドポイントのみ | ディメンション指定が複雑 | `WHERE request.uri LIKE '/pay/%'` を WHERE 句に追加するだけ |
-
----
-
-### シナリオ F: 自動異常検知の感度
-
-**操作**: `make load`（正常トラフィック）→ `slow-payment` を集中実行 → 自動で異常として検出されるかを確認
-
-| 観点 | CloudWatch | New Relic |
-|------|-----------|-----------|
-| 事前設定 | Anomaly Detection を各アラームに個別設定が必要 | Applied Intelligence (Lookout) が設定不要で全エンティティを横断スキャン |
-| 検出スコープ | 設定済みメトリクスのみ | 全サービスの全シグナル（メトリクス・トレース・ログ）を横断 |
-| 通知の集約 | SNS / CloudWatch Actions をサービスごとに設定 | Workflows + 通知チャネル（Slack 等）で一元管理 |
-
----
-
-## 15. CloudWatch → New Relic ログ転送シナリオ（エージェントレス）
-
-> **目的**: New Relic エージェントによる直接収集を停止し、CloudWatch が収集したログ・メトリクスの重要メッセージだけを New Relic に転送した場合、障害検知・エスカレーション対応がどこまで改善するかを確認する。
-
-### アーキテクチャ
-
-```
-EKS Pod stdout/stderr
-  └─ Fluent Bit (CW addon) ──→ CloudWatch Logs
-                                  /aws/containerinsights/obs-poc/application
-                                         │
-                                  Subscription Filter
-                                  filter_pattern: ?ERROR ?CRITICAL ?FATAL ?Exception ?Traceback
-                                         │  ← ここでフィルタ。マッチした行だけ流れる
-                                  Kinesis Firehose (HTTP endpoint destination)
-                                         │
-                                  New Relic Log API (log-api.newrelic.com/log/v1)
-                                         │
-                            New Relic Logs / Alerts / Applied Intelligence
-```
-
-- **Lambda ゼロ**: フィルタリングは CloudWatch Logs のサブスクリプションフィルターパターンで完結
-- **転送対象**: ERROR/CRITICAL/FATAL/Exception/Traceback を含む行のみ（ノイズ削減）
-- **New Relic エージェント**: 無効（namespace `demo-newrelic` には何もデプロイしない）
-- **New Relic APM トレース・メトリクス**: 取得しない。ログのみを New Relic に渡す
-
-### 有効化手順
-
-```bash
-# 1. .env に NR ライセンスキーが設定されていることを確認
-source .env
-
-# 2. Terraform 変数を有効化して apply
-cd infra/terraform
-terraform apply \
-  -var="new_relic_license_key=${NEW_RELIC_LICENSE_KEY}" \
-  -var="new_relic_account_id=${NEW_RELIC_ACCOUNT_ID}" \
-  -var="cw_to_newrelic_enabled=true"
-```
-
-`apply` 完了後、EKS アプリからエラーが発生すると自動的に New Relic Logs に転送される。
-
-### 確認シナリオ G: エラーログの New Relic 到達確認
-
-**操作**:
-```bash
-source .env
-# EC2 デプロイ済みの場合はそのエンドポイントでも可
-for i in $(seq 1 10); do curl -s ${EC2_BASE}/api/checkout/payment-error > /dev/null; done
-```
-
-**New Relic 側の確認**:
-1. New Relic One → **Logs** → すべてのログを表示
-2. 検索クエリ:
-   ```sql
-   SELECT * FROM Log
-   WHERE logGroup = '/aws/containerinsights/obs-poc/application'
-   SINCE 10 minutes ago
-   ```
-3. `logStream`・`logGroup` 属性が入っていることを確認（Firehose が CW Logs の生 JSON をそのまま転送するため自動付与）
-
-| 観点 | CloudWatch のみ | CW → Firehose → NR 転送あり |
-|------|----------------|------------------------------|
-| エラーログの到達先 | CloudWatch Logs Insights のみ | New Relic Logs にも自動転送 |
-| 検索インタフェース | CWL Insights (SQL ライク) | NRQL / New Relic Logs UI |
-| ノイズ量 | 全ログが流れる | ERROR 系のみフィルタ済み（サブスクリプションフィルターで制御） |
-| カスタムコード | 不要 | 不要（Lambda ゼロ） |
-| 転送コスト | - | Firehose $0.029/GB + NR インジェスト |
-
----
-
-### 確認シナリオ H: NRQL アラートによる障害自動検知
-
-CloudWatch Alarm との比較：同じ「エラーが N 件/分を超えたら通知」をどちらが簡単に設定できるか。
-
-**New Relic アラート設定手順**:
-1. New Relic One → **Alerts** → Create alert condition
-2. Signal type: **NRQL**
-3. 条件式:
-   ```sql
-   SELECT count(*) FROM Log
-   WHERE source = 'cloudwatch-forwarded'
-   AND level = 'error'
-   FACET log.stream
-   ```
-4. しきい値: `count > 5 for at least 1 minute` で Critical
-
-**CloudWatch Alarm 設定手順（比較）**:
-1. CloudWatch → Alarms → Create alarm
-2. メトリクス: `AWS/Logs` → `IncomingLogEvents`（エラー件数の直接メトリクスは存在しない）
-3. エラーカウントのメトリクスフィルタを先に作成してからアラームを設定（2ステップ）
-
-| 観点 | CloudWatch Alarm | New Relic NRQL Alert |
-|------|-----------------|----------------------|
-| 条件定義の手順 | メトリクスフィルタ作成 → Alarm 作成（2ステップ） | NRQL 1 行でそのままアラート化 |
-| フィルタの柔軟性 | ログメトリクスフィルタのパターン構文に制約あり | ログの任意フィールドを WHERE / FACET で絞り込み可 |
-| 複数サービスの集約 | サービスごとにアラームが必要 | `FACET log.stream` で一条件に集約 |
-| 通知先 | SNS → メール / Lambda / Slack（別途設定） | Workflows で Slack / PagerDuty / メールを統合管理 |
-
----
-
-### 確認シナリオ I: Applied Intelligence による異常集約とエスカレーション
-
-**操作**: `payment-error` シナリオを断続的に流し、New Relic が複数のアラートをどう集約するかを確認
-
-1. New Relic One → **Alerts** → Issues & Activity
-2. 同じエラーストリームから発火した複数のアラートが **1 Issue** に集約されているか確認
-3. Issue 詳細 → "Correlated alerts" でログ件数の時系列グラフを確認
-4. Acknowledge / Resolve ボタンでエスカレーション状態を管理
-
-| 観点 | CloudWatch | New Relic Applied Intelligence |
-|------|-----------|-------------------------------|
-| 複数アラートの集約 | なし（アラームは個別に発火） | Issues に自動集約・重複排除 |
-| 根本原因の提示 | なし | 相関するエンティティ・ログを Issue に自動リンク |
-| エスカレーション状態管理 | なし | Acknowledged / Resolved / In progress |
-| オンコール通知 | SNS + 手動ルーティング | Workflows → PagerDuty / Slack / Opsgenie 統合 |
-
-### エージェントレス構成の制約まとめ
-
-| 取得できるデータ | 取得できないデータ |
-|----------------|-----------------|
-| ERROR 以上のログ（NR Logs） | APM トレース・スパン |
-| ログに基づく NRQL アラート | サービスマップ・依存関係 |
-| Applied Intelligence によるアラート集約 | Transaction Traces・Breakdown |
-| ログからの手動トレース検索 | Errors Inbox のスタックトレース自動グルーピング |
-
-> **結論**: エージェントレスでも NR の「アラート定義の簡潔さ・Applied Intelligence の集約・エスカレーション管理」は有効。ただし APM レベルの根本原因分析（トレース・スタックトレース）は得られないため、エージェントフル構成との組み合わせが最大効果。
-
----
-
-## 16. 機能差比較表
-
-| 機能 | CloudWatch Application Signals | New Relic APM |
-|------|-------------------------------|---------------|
-| **計装方式** | OTel Operator（CW addon）自動注入 | k8s-agents-operator（NR）自動注入 |
+| 機能 | CloudWatch Application Signals | New Relic APM（フェーズ 2） |
+|------|-------------------------------|----------------------------|
+| **計装方式** | OTel Operator（CW addon）自動注入 | k8s-agents-operator 自動注入 |
 | **エージェント** | ADOT（OTel SDK + AWS Distro） | New Relic Python APM agent |
-| **APM トレース** | X-Ray + App Signals | NR Distributed Tracing |
+| **APM トレース** | X-Ray + Application Signals | NR Distributed Tracing |
 | **サービスマップ** | Application Signals Service Map | APM Service Map |
 | **SLO 管理** | Application Signals SLOs | Service Levels |
 | **K8s メトリクス** | Container Insights | NR Kubernetes |
-| **ログ** | CloudWatch Logs（Fluent Bit） | NR Logs（Fluent Bit） |
-| **Logs in Context** | なし（trace_id で手動検索が必要） | あり（トレース詳細から1クリック・逆引きも可） |
-| **エラーグルーピング** | なし（個別トレースを目視） | Errors Inbox（stack trace fingerprint で自動グルーピング・ステータス管理） |
-| **遅いトランザクション自動検出** | なし（手動フィルタ） | Transaction Traces（しきい値超えを自動キャプチャ・Breakdown Table） |
-| **ユーザー体感スコア** | なし | Apdex（0–1 スコアがサービスサマリに常時表示） |
-| **アラート条件の柔軟性** | メトリクスアラーム（ディメンション固定） | NRQL で任意のシグナル・フィルタをそのままアラート化 |
-| **自動異常検知** | Anomaly Detection（アラームごとに設定必要） | Applied Intelligence / Lookout（設定不要で全エンティティ横断スキャン） |
-| **外部サービス分析** | スパンで確認 | External Services ページ（呼び出し元ごとの breakdown） |
-| **アラート** | CloudWatch Alarms | NR Alerts + NRQL |
-| **フロントエンド** | CloudWatch RUM | NR Browser |
-| **合成監視** | CloudWatch Synthetics | NR Synthetics |
+| **ログ** | CloudWatch Logs (Fluent Bit) | NR Logs (Fluent Bit) |
+| **Logs in Context** | trace_id で手動検索が必要 | トレース詳細から1クリック |
+| **エラーグルーピング** | 個別トレースを目視 | Errors Inbox（自動グルーピング） |
+| **遅いトランザクション検出** | 手動フィルタ | Transaction Traces（自動キャプチャ） |
+| **ユーザー体感スコア** | なし | Apdex |
+| **アラート柔軟性** | メトリクスアラーム（ディメンション固定） | NRQL で任意条件をそのままアラート化 |
 | **コスト構造** | AWS 従量課金 | NR サブスクリプション |
-| **Fargate 対応** | フル対応（CW Agent サイドカー） | 部分対応（DaemonSet 非対応） |
-| **AWS 統合** | ネイティブ（IAM/VPC/X-Ray） | API Polling / CloudWatch Metric Streams |
 
 ---
 
-## 17. PoC 後の削除手順
+## 13. PoC 後の削除手順
 
 ```bash
 make down
 ```
 
 削除される内容:
+
 1. CloudWatch Synthetics canary 停止
 2. Helm リリース削除（nri-bundle）
-3. K8s namespace 削除（demo-ec2, demo-fargate, demo-newrelic, newrelic）
-4. Terraform destroy（EKS, ECR, VPC, IAM, CloudWatch RUM, Synthetics など）
+3. K8s namespace 削除（demo-ec2, demo-fargate, demo-newrelic, newrelic, aws-observability）
+4. Terraform destroy（EKS, ECR × 3, VPC, IAM, CloudWatch RUM, Synthetics など）
 
 残留リソース確認:
 ```bash
@@ -791,11 +539,11 @@ make destroy-check
 
 ---
 
-## 18. 前提・注意事項
+## 14. 前提・注意事項
 
-- **AWS アカウント**: `AdministratorAccess` 相当が必要（EKS, ECR, IAM, VPC, CloudWatch, Cognito, S3, Kinesis Firehose, Synthetics を作成するため）
-- **New Relic**: Pro 以上のライセンスを推奨（k8s-agents-operator は Full Stack Observability 要）
+- **AWS アカウント**: `AdministratorAccess` 相当が必要（EKS, ECR, IAM, VPC, CloudWatch を作成するため）
 - **VPC エンドポイント**: NAT Gateway の代わりに Interface Endpoints を使用（ecr.api, ecr.dkr, logs, sts, monitoring, xray）
 - **シングル AZ 構成**: PoC コスト削減のため。本番は Multi-AZ 必須
-- **OTel Operator と NR Operator の共存**: 同一クラスターに両 Operator を入れているが、namespace が異なるため干渉しない
-- **Fargate + NR**: NR DaemonSet は Fargate 非対応。NR の K8s メトリクスは EC2 ノード上の DaemonSet が K8s API 経由で Fargate Pod データも収集する
+- **ECR リポジトリ**: `force_delete=true` のため、イメージが残っていても `make down` で削除される
+- **X-Ray サンプリング**: Central Sampling のため低サンプリングレートになる場合がある。Application Signals メトリクスは全リクエストから集計されるため、トレースが少なくてもメトリクスは正確
+- **New Relic フェーズ**: `.env` に `NEW_RELIC_LICENSE_KEY` / `NEW_RELIC_ACCOUNT_ID` が必要

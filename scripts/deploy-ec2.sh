@@ -13,11 +13,9 @@ AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-$(aws sts get-caller-identity --query Account 
 ECR_REGISTRY="${ECR_REGISTRY:-${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com}"
 CLUSTER_NAME="${CLUSTER_NAME:-obs-poc}"
 
-# Get IRSA role ARNs from Terraform output
 APP_SIGNALS_EC2_ROLE_ARN=$(cd "${ROOT_DIR}/infra/terraform" && terraform output -raw app_signals_ec2_role_arn 2>/dev/null || echo "")
 
 echo "==> Creating namespaces..."
-# Apply namespace with role ARN substitution
 sed \
   -e "s|\${APP_SIGNALS_EC2_ROLE_ARN}|${APP_SIGNALS_EC2_ROLE_ARN}|g" \
   -e "s|\${APP_SIGNALS_FARGATE_ROLE_ARN}|${APP_SIGNALS_EC2_ROLE_ARN}|g" \
@@ -31,16 +29,20 @@ done
 
 echo ""
 echo "==> Waiting for pods to be ready..."
-kubectl rollout status deployment/frontend-ui -n demo-ec2 --timeout=120s || true
-kubectl rollout status deployment/backend-for-frontend -n demo-ec2 --timeout=120s || true
-kubectl rollout status deployment/order-api -n demo-ec2 --timeout=120s || true
-kubectl rollout status deployment/inventory-api -n demo-ec2 --timeout=120s || true
-kubectl rollout status deployment/payment-api -n demo-ec2 --timeout=120s || true
-kubectl rollout status deployment/external-api-simulator -n demo-ec2 --timeout=120s || true
+kubectl rollout status deployment/netwatch-ui -n demo-ec2 --timeout=120s || true
+kubectl rollout status deployment/device-api   -n demo-ec2 --timeout=120s || true
+kubectl rollout status deployment/alert-api    -n demo-ec2 --timeout=120s || true
 
 echo ""
 echo "==> EC2 Pods:"
 kubectl get pods -n demo-ec2 -o wide
 
 echo ""
-echo "Done. Use 'make port-forward-ec2' to access the UI."
+LB_HOST=$(kubectl get svc netwatch-ui -n demo-ec2 -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
+if [ -n "${LB_HOST}" ]; then
+  echo "Done. NetWatch UI URL: http://${LB_HOST}"
+  echo "Set EC2_BASE=http://${LB_HOST} in .env"
+else
+  echo "Done. LoadBalancer is provisioning. Run:"
+  echo "  kubectl get svc netwatch-ui -n demo-ec2 -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'"
+fi

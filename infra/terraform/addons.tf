@@ -15,8 +15,14 @@ resource "aws_eks_addon" "cloudwatch_observability" {
   configuration_values = jsonencode({
     agent = {
       config = {
+        traces = {
+          traces_collected = {
+            application_signals = {}
+          }
+        }
         logs = {
           metrics_collected = {
+            application_signals = {}
             kubernetes = {
               enhanced_container_insights = true
             }

@@ -81,5 +81,12 @@ echo "==> Fargate Pods:"
 kubectl get pods -n demo-fargate -o wide
 
 echo ""
-echo "Done. Use 'make port-forward-fargate' to access the UI."
+LB_HOST=$(kubectl get svc frontend-ui -n demo-fargate -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
+if [ -n "${LB_HOST}" ]; then
+  echo "Done. Fargate frontend URL: http://${LB_HOST}"
+  echo "Set FARGATE_BASE=http://${LB_HOST} in .env"
+else
+  echo "Done. LoadBalancer is provisioning. Run the following to get the URL:"
+  echo "  kubectl get svc frontend-ui -n demo-fargate -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'"
+fi
 echo "NOTE: Fargate pods run on virtual nodes - DaemonSet-based agents do not apply."

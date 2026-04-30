@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="ja" class="h-full">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}NetWatch{% endblock %} — ネットワーク監視</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    body { font-family: 'Inter', sans-serif; }
+    .sidebar-link { @apply flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-150; }
+    .sidebar-link:hover { @apply bg-slate-800 text-slate-100; }
+    .sidebar-link.active { @apply bg-cyan-500/10 text-cyan-400 border border-cyan-500/20; }
+  </style>
+  {{ cw_rum_snippet | safe }}
+  {{ nr_browser_snippet | safe }}
+</head>
+<body class="bg-[#050d1a] text-slate-200 h-full flex">
+
+  <!-- Sidebar -->
+  <aside class="fixed left-0 top-0 h-screen w-60 bg-[#0a1628] border-r border-slate-800/60 flex flex-col z-20">
+    <!-- Brand -->
+    <div class="px-5 py-5 border-b border-slate-800/60">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-cyan-500/20">
+          <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0"/>
+          </svg>
+        </div>
+        <div>
+          <div class="text-base font-bold text-white tracking-tight">NetWatch</div>
+          <div class="text-[10px] text-slate-500 tracking-wide uppercase">Network Monitor</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Env badge -->
+    <div class="px-5 py-3 border-b border-slate-800/60">
+      <div class="flex items-center gap-2">
+        <span class="relative flex h-2 w-2">
+          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+          <span class="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
+        </span>
+        <span class="text-xs text-slate-400">{{ node_type }} <span class="text-slate-600">/</span> {{ environment }}</span>
+      </div>
+    </div>
+
+    <!-- Nav -->
+    <nav class="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
+      <p class="px-3 py-2 text-[10px] font-semibold text-slate-600 uppercase tracking-wider">メインメニュー</p>
+      <a href="/" class="sidebar-link {% if request.url.path == '/' %}active{% else %}text-slate-400{% endif %}">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
+        </svg>
+        ダッシュボード
+      </a>
+      <a href="/devices" class="sidebar-link {% if '/devices' in request.url.path %}active{% else %}text-slate-400{% endif %}">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18"/>
+        </svg>
+        機器一覧
+      </a>
+      <a href="/alerts" class="sidebar-link {% if request.url.path == '/alerts' %}active{% else %}text-slate-400{% endif %}">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
+        </svg>
+        アラート
+      </a>
+
+      <div class="pt-4">
+        <p class="px-3 py-2 text-[10px] font-semibold text-slate-600 uppercase tracking-wider">開発ツール</p>
+        <a href="/chaos" class="sidebar-link {% if request.url.path == '/chaos' %}bg-red-500/10 text-red-400 border border-red-500/20{% else %}text-slate-600 hover:text-slate-500{% endif %}">
+          <svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+          </svg>
+          Chaos Control
+        </a>
+      </div>
+    </nav>
+
+    <div class="px-5 py-4 border-t border-slate-800/60">
+      <p class="text-[10px] text-slate-700">Observability PoC v2.0</p>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="ml-60 flex-1 min-h-screen flex flex-col">
+    <!-- Topbar -->
+    <header class="sticky top-0 z-10 bg-[#050d1a]/90 backdrop-blur-sm border-b border-slate-800/60 px-8 py-3.5 flex items-center justify-between">
+      <div class="text-sm text-slate-500">{% block breadcrumb %}{% endblock %}</div>
+      <div class="flex items-center gap-3 text-xs text-slate-600">
+        <span class="text-cyan-500">● LIVE</span>
+        <span class="text-slate-700">|</span>
+        <span id="current-time"></span>
+      </div>
+    </header>
+
+    <!-- Content -->
+    <div class="flex-1 p-8">
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+
+  <script>
+    function updateTime() {
+      const el = document.getElementById('current-time');
+      if (el) {
+        el.textContent = new Date().toLocaleString('ja-JP', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+      }
+    }
+    updateTime();
+    setInterval(updateTime, 1000);
+  </script>
+</body>
+</html>

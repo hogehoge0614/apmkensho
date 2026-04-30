@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}機器一覧{% endblock %}
+{% block breadcrumb %}機器一覧{% endblock %}
+
+{% block content %}
+<div class="space-y-5">
+
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-2xl font-bold text-white">ネットワーク機器一覧</h1>
+      <p class="text-sm text-slate-500 mt-1">
+        {{ total }}台の機器
+        {% if query_ms > 1000 %}<span class="text-yellow-500 ml-2">⚠ クエリ: {{ query_ms }}ms (遅延)</span>{% elif query_ms > 0 %}<span class="text-slate-600 ml-2">{{ query_ms }}ms</span>{% endif %}
+      </p>
+    </div>
+  </div>
+
+  <!-- Filter bar -->
+  <form method="GET" action="/devices" class="flex flex-wrap gap-3 bg-[#0a1628] border border-slate-800/60 rounded-xl p-4">
+    <input type="text" name="q" value="{{ filters.q or '' }}" placeholder="機器名・ID・場所で検索..."
+      class="flex-1 min-w-48 bg-slate-800/60 border border-slate-700/60 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/20">
+
+    <select name="area" class="bg-slate-800/60 border border-slate-700/60 rounded-lg px-3 py-2 text-sm text-slate-300 focus:outline-none focus:border-cyan-500/50">
+      <option value="">エリア: すべて</option>
+      {% for val, label in [('tokyo','東京'),('osaka','大阪'),('nagoya','名古屋'),('fukuoka','福岡'),('sapporo','札幌')] %}
+      <option value="{{ val }}" {% if filters.area == val %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+
+    <select name="type" class="bg-slate-800/60 border border-slate-700/60 rounded-lg px-3 py-2 text-sm text-slate-300 focus:outline-none focus:border-cyan-500/50">
+      <option value="">機器種別: すべて</option>
+      {% for val, label in [('core_router','コアルーター'),('edge_router','エッジルーター'),('l3_switch','L3スイッチ'),('l2_switch','L2スイッチ'),('firewall','ファイアウォール'),('access_point','アクセスポイント')] %}
+      <option value="{{ val }}" {% if filters.type == val %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+
+    <select name="status" class="bg-slate-800/60 border border-slate-700/60 rounded-lg px-3 py-2 text-sm text-slate-300 focus:outline-none focus:border-cyan-500/50">
+      <option value="">ステータス: すべて</option>
+      {% for val, label in [('active','正常'),('warning','警告'),('critical','障害'),('offline','オフライン'),('maintenance','メンテ中')] %}
+      <option value="{{ val }}" {% if filters.status == val %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+
+    <button type="submit" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium rounded-lg transition-colors">検索</button>
+    <a href="/devices" class="px-4 py-2 bg-slate-700/60 hover:bg-slate-700 text-slate-300 text-sm rounded-lg transition-colors">クリア</a>
+  </form>
+
+  <!-- Table -->
+  <div class="bg-[#0a1628] border border-slate-800/60 rounded-xl overflow-hidden">
+    <table class="w-full">
+      <thead>
+        <tr class="border-b border-slate-800/60">
+          <th class="px-5 py-3.5 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wider">機器ID</th>
+          <th class="px-5 py-3.5 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wider">名称</th>
+          <th class="px-5 py-3.5 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wider">種別</th>
+          <th class="px-5 py-3.5 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wider">エリア</th>
+          <th class="px-5 py-3.5 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wider">IPアドレス</th>
+          <th class="px-5 py-3.5 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wider">ベンダー</th>
+          <th class="px-5 py-3.5 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wider">ステータス</th>
+          <th class="px-5 py-3.5 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wider">稼働日数</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-800/60">
+        {% macro type_label(t) %}{% if t=='core_router' %}コアルーター{% elif t=='edge_router' %}エッジルーター{% elif t=='l3_switch' %}L3スイッチ{% elif t=='l2_switch' %}L2スイッチ{% elif t=='firewall' %}ファイアウォール{% elif t=='access_point' %}AP{% else %}{{ t }}{% endif %}{% endmacro %}
+        {% macro area_label(a) %}{% if a=='tokyo' %}東京{% elif a=='osaka' %}大阪{% elif a=='nagoya' %}名古屋{% elif a=='fukuoka' %}福岡{% elif a=='sapporo' %}札幌{% else %}{{ a }}{% endif %}{% endmacro %}
+
+        {% for d in devices %}
+        <tr class="hover:bg-slate-800/30 transition-colors cursor-pointer" onclick="location.href='/devices/{{ d.device_id }}'">
+          <td class="px-5 py-3.5">
+            <span class="font-mono text-xs text-cyan-400 hover:text-cyan-300">{{ d.device_id }}</span>
+          </td>
+          <td class="px-5 py-3.5">
+            <a href="/devices/{{ d.device_id }}" class="text-sm text-slate-200 hover:text-white font-medium">{{ d.name }}</a>
+            <div class="text-[10px] text-slate-600">{{ d.location }}</div>
+          </td>
+          <td class="px-5 py-3.5 text-xs text-slate-400">{{ type_label(d.type) }}</td>
+          <td class="px-5 py-3.5 text-xs text-slate-400">{{ area_label(d.area) }}</td>
+          <td class="px-5 py-3.5 font-mono text-xs text-slate-400">{{ d.ip_address }}</td>
+          <td class="px-5 py-3.5 text-xs text-slate-400">{{ d.vendor }}</td>
+          <td class="px-5 py-3.5">
+            {% if d.status == 'active' %}
+            <span class="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-md bg-green-500/10 text-green-400 border border-green-500/20">
+              <span class="w-1.5 h-1.5 rounded-full bg-green-400"></span>正常
+            </span>
+            {% elif d.status == 'warning' %}
+            <span class="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-md bg-yellow-500/10 text-yellow-400 border border-yellow-500/20">
+              <span class="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse"></span>警告
+            </span>
+            {% elif d.status == 'critical' %}
+            <span class="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-md bg-red-500/10 text-red-400 border border-red-500/20">
+              <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span>障害
+            </span>
+            {% elif d.status == 'offline' %}
+            <span class="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-md bg-slate-700/40 text-slate-500 border border-slate-700/50">
+              <span class="w-1.5 h-1.5 rounded-full bg-slate-600"></span>offline
+            </span>
+            {% elif d.status == 'maintenance' %}
+            <span class="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-md bg-purple-500/10 text-purple-400 border border-purple-500/20">
+              <span class="w-1.5 h-1.5 rounded-full bg-purple-400"></span>メンテ中
+            </span>
+            {% endif %}
+          </td>
+          <td class="px-5 py-3.5 text-xs text-slate-500">
+            {% if d.uptime_days > 0 %}{{ d.uptime_days }}日{% else %}<span class="text-slate-700">—</span>{% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="8" class="px-5 py-16 text-center text-sm text-slate-600">
+            条件に一致する機器が見つかりませんでした
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

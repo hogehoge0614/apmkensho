@@ -25,7 +25,7 @@ variable "node_instance_type" {
 variable "node_count" {
   description = "Number of EC2 nodes in managed node group"
   type        = number
-  default     = 1
+  default     = 2
 }
 
 variable "new_relic_account_id" {
@@ -52,12 +52,9 @@ variable "services" {
   description = "List of microservices for ECR repositories"
   type        = list(string)
   default = [
-    "frontend-ui",
-    "backend-for-frontend",
-    "order-api",
-    "inventory-api",
-    "payment-api",
-    "external-api-simulator"
+    "netwatch-ui",
+    "device-api",
+    "alert-api",
   ]
 }
 
