@@ -18,6 +18,7 @@ SERVICES=(
   "netwatch-ui"
   "device-api"
   "alert-api"
+  "metrics-collector"
 )
 
 echo "==> Logging in to ECR: ${ECR_REGISTRY}"

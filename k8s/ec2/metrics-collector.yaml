@@ -2,19 +2,19 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: device-api
+  name: metrics-collector
   namespace: demo-ec2
   labels:
-    app: device-api
+    app: metrics-collector
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: device-api
+      app: metrics-collector
   template:
     metadata:
       labels:
-        app: device-api
+        app: metrics-collector
         environment: demo-ec2
       annotations:
         instrumentation.opentelemetry.io/inject-python: "true"
@@ -25,14 +25,14 @@ spec:
       nodeSelector:
         node-type: ec2
       containers:
-        - name: device-api
-          image: ${ECR_REGISTRY}/obs-poc/device-api:latest
+        - name: metrics-collector
+          image: ${ECR_REGISTRY}/obs-poc/metrics-collector:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
           env:
             - name: SERVICE_NAME
-              value: "device-api"
+              value: "metrics-collector"
             - name: ENVIRONMENT
               value: "demo-ec2"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
@@ -40,16 +40,9 @@ spec:
             - name: OTEL_LOGS_EXPORTER
               value: "none"
             - name: OTEL_SERVICE_NAME
-              value: "device-api"
+              value: "metrics-collector"
             - name: OTEL_RESOURCE_ATTRIBUTES
               value: "deployment.environment=demo-ec2,k8s.namespace.name=demo-ec2"
-            - name: METRICS_COLLECTOR_URL
-              value: "http://metrics-collector:8000"
-            - name: DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: device-api-db
-                  key: DATABASE_URL
             - name: POD_NAME
               valueFrom:
                 fieldRef:
@@ -60,16 +53,16 @@ spec:
                   fieldPath: metadata.namespace
           resources:
             requests:
-              cpu: "100m"
-              memory: "128Mi"
+              cpu: "50m"
+              memory: "64Mi"
             limits:
-              cpu: "500m"
-              memory: "512Mi"
+              cpu: "200m"
+              memory: "128Mi"
           readinessProbe:
             httpGet:
               path: /health
               port: 8000
-            initialDelaySeconds: 30
+            initialDelaySeconds: 15
             periodSeconds: 10
           livenessProbe:
             httpGet:
@@ -81,14 +74,14 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: device-api
+  name: metrics-collector
   namespace: demo-ec2
   labels:
-    app: device-api
+    app: metrics-collector
 spec:
   type: ClusterIP
   selector:
-    app: device-api
+    app: metrics-collector
   ports:
     - port: 8000
       targetPort: 8000

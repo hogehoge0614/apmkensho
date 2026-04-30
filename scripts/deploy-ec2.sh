@@ -21,6 +21,24 @@ sed \
   -e "s|\${APP_SIGNALS_FARGATE_ROLE_ARN}|${APP_SIGNALS_EC2_ROLE_ARN}|g" \
   "${ROOT_DIR}/k8s/namespaces.yaml" | kubectl apply -f -
 
+echo ""
+echo "==> Creating database secret (device-api-db)..."
+RDS_ENDPOINT=$(cd "${ROOT_DIR}/infra/terraform" && terraform output -raw rds_endpoint 2>/dev/null || echo "")
+RDS_PASSWORD=$(cd "${ROOT_DIR}/infra/terraform" && terraform output -raw rds_password 2>/dev/null || echo "")
+
+if [ -z "${RDS_ENDPOINT}" ]; then
+  echo "  [WARN] rds_endpoint not found in terraform outputs — did you run 'make up'?"
+  echo "  Skipping database secret creation. device-api will fail to start without it."
+else
+  DB_URL="postgresql://netwatch:${RDS_PASSWORD}@${RDS_ENDPOINT}/netwatch"
+  kubectl create secret generic device-api-db \
+    --namespace demo-ec2 \
+    --from-literal=DATABASE_URL="${DB_URL}" \
+    --dry-run=client -o yaml | kubectl apply -f -
+  echo "  Secret device-api-db created/updated."
+fi
+
+echo ""
 echo "==> Deploying EC2 manifests to demo-ec2 namespace..."
 for manifest in "${ROOT_DIR}/k8s/ec2/"*.yaml; do
   echo "  Applying: $(basename ${manifest})"
@@ -29,9 +47,10 @@ done
 
 echo ""
 echo "==> Waiting for pods to be ready..."
-kubectl rollout status deployment/netwatch-ui -n demo-ec2 --timeout=120s || true
-kubectl rollout status deployment/device-api   -n demo-ec2 --timeout=120s || true
-kubectl rollout status deployment/alert-api    -n demo-ec2 --timeout=120s || true
+kubectl rollout status deployment/metrics-collector -n demo-ec2 --timeout=120s || true
+kubectl rollout status deployment/device-api        -n demo-ec2 --timeout=120s || true
+kubectl rollout status deployment/alert-api         -n demo-ec2 --timeout=120s || true
+kubectl rollout status deployment/netwatch-ui       -n demo-ec2 --timeout=120s || true
 
 echo ""
 echo "==> EC2 Pods:"

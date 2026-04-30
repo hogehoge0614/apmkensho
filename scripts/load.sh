@@ -1,4 +1,14 @@
 #!/usr/bin/env bash
+# Usage:
+#   ./scripts/load.sh                    # デフォルト: all scenarios, ROUNDS回繰り返し
+#   ./scripts/load.sh normal-dashboard   # ダッシュボードのみ
+#   ./scripts/load.sh normal-devices     # 機器一覧
+#   ./scripts/load.sh normal-device-detail  # 機器詳細（3ホップトレース）
+#   ./scripts/load.sh normal-alerts      # アラート一覧
+#   ./scripts/load.sh slow-query-devices # Slow Query ON後の機器一覧連打
+#   ./scripts/load.sh error-inject-devices # Error Inject後の機器一覧連打
+#   ./scripts/load.sh alert-storm-alerts # Alert Storm後のアラート一覧
+#   ./scripts/load.sh mixed-user-flow    # ユーザー回遊シナリオ
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -8,8 +18,10 @@ FARGATE_BASE="${FARGATE_BASE:-http://localhost:8081}"
 NEWRELIC_BASE="${NEWRELIC_BASE:-}"
 ROUNDS="${ROUNDS:-3}"
 DELAY="${DELAY:-1}"
+SCENARIO="${1:-all}"
 
-SCENARIOS=(
+# ── 全シナリオリスト（デフォルト） ────────────────────────────────────────
+ALL_SCENARIOS=(
   "devices"
   "devices?area=tokyo"
   "devices?area=osaka"
@@ -28,78 +40,279 @@ SCENARIOS=(
   "devices?q=OSK"
 )
 
-run_requests() {
+# ── シナリオ別リスト ──────────────────────────────────────────────────────
+NORMAL_DASHBOARD_SCENARIOS=("")
+NORMAL_DEVICES_SCENARIOS=(
+  "devices"
+  "devices?area=tokyo"
+  "devices?area=osaka"
+  "devices?area=nagoya"
+  "devices?area=fukuoka"
+  "devices?status=warning"
+  "devices?status=critical"
+)
+NORMAL_DEVICE_DETAIL_SCENARIOS=(
+  "devices/TKY-CORE-001"
+  "devices/OSK-L3SW-001"
+  "devices/OSK-CORE-001"
+  "devices/FUK-CORE-001"
+  "devices/SPR-CORE-001"
+  "devices/NGY-CORE-001"
+  "devices/TKY-L3SW-001"
+)
+NORMAL_ALERTS_SCENARIOS=(
+  "alerts"
+  "alerts?severity=critical"
+  "alerts?severity=warning"
+)
+SLOW_QUERY_DEVICES_SCENARIOS=(
+  "devices"
+  "devices?area=tokyo"
+  "devices/TKY-CORE-001"
+  "devices/OSK-L3SW-001"
+  "devices"
+  "devices/TKY-EDGE-001"
+)
+ERROR_INJECT_DEVICES_SCENARIOS=(
+  "devices"
+  "devices?area=tokyo"
+  "devices?area=osaka"
+  "devices?status=active"
+  "devices"
+  "devices?type=core_router"
+  "devices"
+  "devices?area=nagoya"
+)
+ALERT_STORM_ALERTS_SCENARIOS=(
+  "alerts"
+  "alerts?severity=critical"
+  "alerts?severity=warning"
+  "alerts"
+)
+MIXED_USER_FLOW_SCENARIOS=(
+  ""
+  "devices"
+  "devices/TKY-CORE-001"
+  "alerts"
+  "chaos"
+)
+
+# ── 単一リクエスト実行 ─────────────────────────────────────────────────────
+run_request() {
+  local base="$1"
+  local scenario="$2"
+
+  local url="${base}/${scenario}"
+  local req_id="load-$(python3 -c "import time; print(int(time.time()*1000))")-${RANDOM}"
+  local start=$(python3 -c "import time; print(int(time.time()*1000))")
+
+  echo -n "  ${scenario:-/}: "
+  response=$(curl -sf -w "\n%{http_code}" \
+    -H "X-Request-Id: ${req_id}" \
+    -H "X-Load-Test: true" \
+    "${url}" 2>/dev/null || echo "ERROR")
+
+  local http_code=$(echo "${response}" | tail -1)
+  local end=$(python3 -c "import time; print(int(time.time()*1000))")
+  local latency=$((end - start))
+
+  if echo "${response}" | grep -q "ERROR"; then
+    echo "FAILED (connection error) ${latency}ms"
+  elif [ "${http_code}" = "500" ]; then
+    echo "HTTP 500 (server error) ${latency}ms"
+  else
+    echo "HTTP ${http_code} ${latency}ms"
+  fi
+}
+
+# ── シナリオ配列を実行 ─────────────────────────────────────────────────────
+run_scenarios() {
   local base="$1"
   local label="$2"
+  shift 2
+  local scenarios=("$@")
 
   echo ""
-  echo "=== Running load against ${label} (${base}) ==="
+  echo "=== ${label} (${base}) ==="
 
-  for scenario in "${SCENARIOS[@]}"; do
-    local url="${base}/${scenario}"
-    local req_id="load-$(python3 -c "import time; print(int(time.time()*1000))")-${RANDOM}"
-    local start=$(python3 -c "import time; print(int(time.time()*1000))")
-
-    echo -n "  ${scenario}: "
-    response=$(curl -sf -w "\n%{http_code}" \
-      -H "X-Request-Id: ${req_id}" \
-      -H "X-Load-Test: true" \
-      "${url}" 2>/dev/null || echo "ERROR")
-
-    local http_code=$(echo "${response}" | tail -1)
-    local end=$(python3 -c "import time; print(int(time.time()*1000))")
-    local latency=$((end - start))
-
-    if echo "${response}" | grep -q "ERROR"; then
-      echo "FAILED (connection error) ${latency}ms"
-    elif [ "${http_code}" = "500" ]; then
-      echo "HTTP 500 (server error) ${latency}ms"
-    else
-      echo "HTTP ${http_code} ${latency}ms"
-    fi
+  for scenario in "${scenarios[@]}"; do
+    run_request "${base}" "${scenario}"
     sleep "${DELAY}"
   done
 }
 
-echo "======================================================"
-echo " NetWatch Load Generator"
-echo " Rounds: ${ROUNDS}, Delay: ${DELAY}s between requests"
-echo "======================================================"
+# ── ターゲット存在確認 ─────────────────────────────────────────────────────
+check_target() {
+  local base="$1"
+  curl -sf "${base}/health" > /dev/null 2>&1
+}
 
-for round in $(seq 1 "${ROUNDS}"); do
+# ── 対象ベースURLに対してシナリオ実行 ─────────────────────────────────────
+run_on_available_targets() {
+  local label="$1"
+  shift
+  local scenarios=("$@")
+
+  if check_target "${EC2_BASE}"; then
+    run_scenarios "${EC2_BASE}" "EC2 / ${label}" "${scenarios[@]}"
+  else
+    echo "  [SKIP] EC2 not reachable at ${EC2_BASE}"
+  fi
+
+  if check_target "${FARGATE_BASE}"; then
+    run_scenarios "${FARGATE_BASE}" "Fargate / ${label}" "${scenarios[@]}"
+  fi
+
+  if [ -n "${NEWRELIC_BASE}" ] && check_target "${NEWRELIC_BASE}"; then
+    run_scenarios "${NEWRELIC_BASE}" "NewRelic / ${label}" "${scenarios[@]}"
+  fi
+}
+
+# ── ヘルプ ────────────────────────────────────────────────────────────────
+print_help() {
   echo ""
-  echo "====== Round ${round}/${ROUNDS} ======"
+  echo "Usage: $0 [scenario]"
+  echo ""
+  echo "Scenarios:"
+  echo "  all                  全シナリオ（デフォルト）"
+  echo "  normal-dashboard     ダッシュボード"
+  echo "  normal-devices       機器一覧（フィルタ各種）"
+  echo "  normal-device-detail 機器詳細 7件（3ホップトレース）"
+  echo "  normal-alerts        アラート一覧"
+  echo "  slow-query-devices   Slow Query ON後の機器一覧・詳細連打"
+  echo "  error-inject-devices Error Inject後の機器一覧連打"
+  echo "  alert-storm-alerts   Alert Storm後のアラート一覧"
+  echo "  mixed-user-flow      ユーザー回遊（ / → /devices → /devices/id → /alerts → /chaos）"
+  echo ""
+  echo "Environment variables:"
+  echo "  EC2_BASE=http://...   対象URL (default: http://localhost:8080)"
+  echo "  ROUNDS=3              繰り返し回数"
+  echo "  DELAY=1               リクエスト間隔(秒)"
+}
 
-  if curl -sf "${EC2_BASE}/health" > /dev/null 2>&1; then
-    run_requests "${EC2_BASE}" "EC2"
-  else
-    echo "  [SKIP] EC2 frontend not reachable at ${EC2_BASE}"
-    echo "  Set EC2_BASE in .env"
-  fi
+# ── メイン ────────────────────────────────────────────────────────────────
+case "${SCENARIO}" in
+  -h|--help|help)
+    print_help
+    exit 0
+    ;;
 
-  if curl -sf "${FARGATE_BASE}/health" > /dev/null 2>&1; then
-    run_requests "${FARGATE_BASE}" "Fargate"
-  else
-    echo "  [SKIP] Fargate frontend not reachable at ${FARGATE_BASE}"
-  fi
+  normal-dashboard)
+    echo "====== Normal Dashboard Load ======"
+    echo "Rounds: ${ROUNDS}, Delay: ${DELAY}s"
+    for round in $(seq 1 "${ROUNDS}"); do
+      echo "-- Round ${round}/${ROUNDS} --"
+      run_on_available_targets "normal-dashboard" "${NORMAL_DASHBOARD_SCENARIOS[@]}"
+    done
+    ;;
 
-  if [ -n "${NEWRELIC_BASE}" ] && curl -sf "${NEWRELIC_BASE}/health" > /dev/null 2>&1; then
-    run_requests "${NEWRELIC_BASE}" "NewRelic"
-  elif [ -z "${NEWRELIC_BASE}" ]; then
-    echo "  [SKIP] NEWRELIC_BASE not set in .env"
-  fi
+  normal-devices)
+    echo "====== Normal Devices Load ======"
+    echo "Rounds: ${ROUNDS}, Delay: ${DELAY}s"
+    for round in $(seq 1 "${ROUNDS}"); do
+      echo "-- Round ${round}/${ROUNDS} --"
+      run_on_available_targets "normal-devices" "${NORMAL_DEVICES_SCENARIOS[@]}"
+    done
+    ;;
 
-  if [ "${round}" -lt "${ROUNDS}" ]; then
-    echo ""
-    echo "  Waiting ${DELAY}s before next round..."
-    sleep "${DELAY}"
-  fi
-done
+  normal-device-detail)
+    echo "====== Normal Device Detail Load (3-hop traces) ======"
+    echo "Rounds: ${ROUNDS}, Delay: ${DELAY}s"
+    for round in $(seq 1 "${ROUNDS}"); do
+      echo "-- Round ${round}/${ROUNDS} --"
+      run_on_available_targets "normal-device-detail" "${NORMAL_DEVICE_DETAIL_SCENARIOS[@]}"
+    done
+    ;;
+
+  normal-alerts)
+    echo "====== Normal Alerts Load ======"
+    echo "Rounds: ${ROUNDS}, Delay: ${DELAY}s"
+    for round in $(seq 1 "${ROUNDS}"); do
+      echo "-- Round ${round}/${ROUNDS} --"
+      run_on_available_targets "normal-alerts" "${NORMAL_ALERTS_SCENARIOS[@]}"
+    done
+    ;;
+
+  slow-query-devices)
+    echo "====== Slow Query: Devices Load ======"
+    echo "Chaos: Slow Query ON が前提です。/chaos 画面から有効にしてから実行してください。"
+    echo "Rounds: ${ROUNDS}, Delay: ${DELAY}s"
+    for round in $(seq 1 "${ROUNDS}"); do
+      echo "-- Round ${round}/${ROUNDS} --"
+      run_on_available_targets "slow-query-devices" "${SLOW_QUERY_DEVICES_SCENARIOS[@]}"
+    done
+    ;;
+
+  error-inject-devices)
+    echo "====== Error Inject: Devices Load ======"
+    echo "Chaos: Error Inject ON が前提です。/chaos 画面から有効にしてから実行してください。"
+    echo "Rounds: ${ROUNDS}, Delay: ${DELAY}s"
+    for round in $(seq 1 "${ROUNDS}"); do
+      echo "-- Round ${round}/${ROUNDS} --"
+      run_on_available_targets "error-inject-devices" "${ERROR_INJECT_DEVICES_SCENARIOS[@]}"
+    done
+    ;;
+
+  alert-storm-alerts)
+    echo "====== Alert Storm: Alerts Load ======"
+    echo "Chaos: Alert Storm を実行済みの前提です。"
+    echo "Rounds: ${ROUNDS}, Delay: ${DELAY}s"
+    for round in $(seq 1 "${ROUNDS}"); do
+      echo "-- Round ${round}/${ROUNDS} --"
+      run_on_available_targets "alert-storm-alerts" "${ALERT_STORM_ALERTS_SCENARIOS[@]}"
+    done
+    ;;
+
+  mixed-user-flow)
+    echo "====== Mixed User Flow ======"
+    echo "  / → /devices → /devices/TKY-CORE-001 → /alerts → /chaos"
+    echo "Rounds: ${ROUNDS}, Delay: ${DELAY}s"
+    for round in $(seq 1 "${ROUNDS}"); do
+      echo "-- Round ${round}/${ROUNDS} --"
+      run_on_available_targets "mixed-user-flow" "${MIXED_USER_FLOW_SCENARIOS[@]}"
+    done
+    ;;
+
+  all|*)
+    echo "======================================================"
+    echo " NetWatch Load Generator — All Scenarios"
+    echo " Rounds: ${ROUNDS}, Delay: ${DELAY}s"
+    echo "======================================================"
+
+    for round in $(seq 1 "${ROUNDS}"); do
+      echo ""
+      echo "====== Round ${round}/${ROUNDS} ======"
+
+      if check_target "${EC2_BASE}"; then
+        run_scenarios "${EC2_BASE}" "EC2" "${ALL_SCENARIOS[@]}"
+      else
+        echo "  [SKIP] EC2 frontend not reachable at ${EC2_BASE}. Set EC2_BASE in .env"
+      fi
+
+      if check_target "${FARGATE_BASE}"; then
+        run_scenarios "${FARGATE_BASE}" "Fargate" "${ALL_SCENARIOS[@]}"
+      else
+        echo "  [SKIP] Fargate not reachable at ${FARGATE_BASE}"
+      fi
+
+      if [ -n "${NEWRELIC_BASE}" ] && check_target "${NEWRELIC_BASE}"; then
+        run_scenarios "${NEWRELIC_BASE}" "NewRelic" "${ALL_SCENARIOS[@]}"
+      elif [ -z "${NEWRELIC_BASE}" ]; then
+        echo "  [SKIP] NEWRELIC_BASE not set"
+      fi
+
+      if [ "${round}" -lt "${ROUNDS}" ]; then
+        echo ""
+        echo "  Waiting ${DELAY}s before next round..."
+        sleep "${DELAY}"
+      fi
+    done
+    ;;
+esac
 
 echo ""
 echo "======================================================"
 echo " Load generation complete!"
-echo " Check traces in:"
-echo "   CloudWatch Application Signals:"
+echo " Check Application Signals:"
 echo "   https://ap-northeast-1.console.aws.amazon.com/cloudwatch/home?region=ap-northeast-1#application-signals:services"
 echo "======================================================"

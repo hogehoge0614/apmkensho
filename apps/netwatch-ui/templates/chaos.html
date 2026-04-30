@@ -135,6 +135,31 @@
     <div class="mt-3 text-xs text-slate-600">開始後: <a href="/alerts" class="text-cyan-600 hover:text-cyan-500">/alerts</a> ページでアラートが増加します</div>
   </div>
 
+  <!-- Scenario 4: RUM JS Error (optional, for CloudWatch RUM verification) -->
+  <div class="bg-[#0a1628] border border-slate-800/60 rounded-xl p-5">
+    <div class="flex items-start justify-between mb-4">
+      <div>
+        <div class="flex items-center gap-2 mb-1">
+          <span class="text-xs px-2 py-0.5 bg-purple-500/10 text-purple-400 rounded-md border border-purple-500/20">RUM検証</span>
+          <span class="text-sm font-semibold text-slate-200">JavaScript エラー発生（CloudWatch RUM 検証用）</span>
+        </div>
+        <p class="text-xs text-slate-500">ブラウザで意図的な JS エラーを発生させ、CloudWatch RUM の JS エラー検知を確認する。RUM を設定済みの場合のみ意味があります。</p>
+      </div>
+    </div>
+    <div class="bg-slate-900/60 rounded-lg p-4 mb-4 space-y-2 text-xs">
+      <div class="text-slate-400 font-semibold">CloudWatch RUMで確認すること：</div>
+      <ul class="space-y-1 text-slate-500 list-disc list-inside">
+        <li>RUM → JS Errors → エラー件数が増加するか</li>
+        <li>RUM → Sessions → このページへのアクセスが記録されるか</li>
+        <li>エラーメッセージ: <code class="text-cyan-400">NetWatch RUM test error</code> が見えるか</li>
+      </ul>
+    </div>
+    <div class="flex items-center gap-3">
+      <button onclick="triggerJsError()" class="px-4 py-2 bg-purple-800 hover:bg-purple-700 text-white text-sm font-medium rounded-lg transition-colors">JSエラー発生</button>
+    </div>
+    <div class="mt-3 text-xs text-slate-600">CloudWatch RUM を設定していない場合は無視してください。ブラウザのコンソールにエラーが出るだけです。</div>
+  </div>
+
   <!-- Status messages -->
   <div id="status-msg" class="hidden text-sm p-4 bg-slate-800/60 border border-slate-700/40 rounded-xl text-slate-300"></div>
 
@@ -162,5 +187,15 @@ const disableErrorInject = () => post('/api/chaos/error-inject', {rate: 0});
 const startAlertStorm  = () => post('/api/chaos/alert-storm',  {enable: true});
 const stopAlertStorm   = () => post('/api/chaos/alert-storm',  {enable: false});
 const resetAll         = () => post('/api/chaos/reset',        {});
+
+function triggerJsError() {
+  try {
+    // RUM検証用: 意図的な JS エラーを発生させる
+    throw new Error("NetWatch RUM test error - intentional JS error for CloudWatch RUM verification");
+  } catch(e) {
+    console.error("[RUM Test]", e);
+    showStatus('✓ JSエラーを発生させました。CloudWatch RUM → JS Errors を確認してください。コンソールにもエラーが出ています。');
+  }
+}
 </script>
 {% endblock %}

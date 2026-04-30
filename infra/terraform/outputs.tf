@@ -90,3 +90,19 @@ output "kubeconfig_command" {
   description = "Command to update kubeconfig"
   value       = "aws eks update-kubeconfig --region ${var.aws_region} --name ${aws_eks_cluster.main.name}"
 }
+
+output "rds_endpoint" {
+  description = "RDS endpoint (host:port)"
+  value       = aws_db_instance.netwatch.endpoint
+}
+
+output "rds_address" {
+  description = "RDS hostname"
+  value       = aws_db_instance.netwatch.address
+}
+
+output "rds_password" {
+  description = "RDS master password"
+  value       = var.rds_password
+  sensitive   = true
+}

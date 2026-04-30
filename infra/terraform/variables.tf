@@ -55,7 +55,15 @@ variable "services" {
     "netwatch-ui",
     "device-api",
     "alert-api",
+    "metrics-collector",
   ]
+}
+
+variable "rds_password" {
+  description = "RDS master password for NetWatch database"
+  type        = string
+  default     = "NetWatch2024poc"
+  sensitive   = true
 }
 
 variable "synthetics_canary_url" {
