@@ -50,6 +50,12 @@ spec:
                 secretKeyRef:
                   name: device-api-db
                   key: DATABASE_URL
+            - name: STATSD_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: STATSD_PORT
+              value: "8125"
             - name: POD_NAME
               valueFrom:
                 fieldRef:

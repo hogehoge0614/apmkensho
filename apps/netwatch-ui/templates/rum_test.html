@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+
+{% block title %}RUM Test{% endblock %}
+
+{% block breadcrumb %}開発ツール / <span class="text-slate-300">RUM Test</span>{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl space-y-6">
+
+  <!-- Status Card -->
+  <div class="bg-[#0a1628] border rounded-xl p-6 {% if rum_enabled %}border-cyan-500/30{% else %}border-slate-800{% endif %}">
+    <div class="flex items-center gap-3 mb-4">
+      <div class="w-8 h-8 {% if rum_enabled %}bg-cyan-500/20{% else %}bg-slate-700/50{% endif %} rounded-lg flex items-center justify-center">
+        <svg class="w-4 h-4 {% if rum_enabled %}text-cyan-400{% else %}text-slate-500{% endif %}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+        </svg>
+      </div>
+      <div>
+        <h2 class="text-base font-semibold text-slate-100">CloudWatch RUM ステータス</h2>
+        <p class="text-xs text-slate-500">ブラウザ監視エージェントの状態</p>
+      </div>
+      <span class="ml-auto px-3 py-1 rounded-full text-xs font-medium {% if rum_enabled %}bg-cyan-500/15 text-cyan-400{% else %}bg-slate-700/50 text-slate-500{% endif %}">
+        {% if rum_enabled %}ENABLED{% else %}DISABLED{% endif %}
+      </span>
+    </div>
+
+    {% if rum_enabled %}
+    <dl class="grid grid-cols-2 gap-4 text-sm mb-4">
+      <div>
+        <dt class="text-slate-500 text-xs mb-0.5">App Monitor ID</dt>
+        <dd class="font-mono text-slate-300 text-xs truncate">{{ rum_app_id }}</dd>
+      </div>
+      <div>
+        <dt class="text-slate-500 text-xs mb-0.5">Region</dt>
+        <dd class="font-mono text-slate-300 text-xs">{{ rum_region }}</dd>
+      </div>
+    </dl>
+    <div id="rum-init-status" class="text-xs text-slate-500">クライアント初期化確認中...</div>
+    {% else %}
+    <p class="text-sm text-slate-500">
+      <code class="bg-slate-800 px-1.5 py-0.5 rounded text-xs">CW_RUM_APP_MONITOR_ID</code> と
+      <code class="bg-slate-800 px-1.5 py-0.5 rounded text-xs">CW_RUM_IDENTITY_POOL_ID</code>
+      を .env に設定して <code class="bg-slate-800 px-1.5 py-0.5 rounded text-xs">make ec2-appsignals-enable-rum</code> を実行してください。
+    </p>
+    {% endif %}
+  </div>
+
+  <!-- Test Actions -->
+  <div class="bg-[#0a1628] border border-slate-800 rounded-xl p-6">
+    <h2 class="text-base font-semibold text-slate-100 mb-1">テレメトリ送信テスト</h2>
+    <p class="text-xs text-slate-500 mb-5">ボタンを押してイベントを発生させ、CloudWatch RUM コンソールで確認します</p>
+    <div class="grid grid-cols-1 gap-3">
+
+      <div class="flex items-center justify-between p-4 bg-slate-900/50 rounded-lg border border-slate-800/60">
+        <div>
+          <p class="text-sm font-medium text-slate-200">JavaScript エラー</p>
+          <p class="text-xs text-slate-500 mt-0.5">未定義変数参照エラーを発生させる → RUM Errors タブに記録</p>
+        </div>
+        <button onclick="triggerJsError()" class="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 text-sm font-medium rounded-lg border border-red-500/30 transition-colors">
+          実行
+        </button>
+      </div>
+
+      <div class="flex items-center justify-between p-4 bg-slate-900/50 rounded-lg border border-slate-800/60">
+        <div>
+          <p class="text-sm font-medium text-slate-200">HTTP エラー (404)</p>
+          <p class="text-xs text-slate-500 mt-0.5">存在しないエンドポイントを fetch する → RUM HTTP タブに記録</p>
+        </div>
+        <button onclick="triggerHttpError()" class="px-4 py-2 bg-orange-500/20 hover:bg-orange-500/30 text-orange-400 text-sm font-medium rounded-lg border border-orange-500/30 transition-colors">
+          実行
+        </button>
+      </div>
+
+      <div class="flex items-center justify-between p-4 bg-slate-900/50 rounded-lg border border-slate-800/60">
+        <div>
+          <p class="text-sm font-medium text-slate-200">カスタムイベント</p>
+          <p class="text-xs text-slate-500 mt-0.5">cwr('recordEvent', ...) でカスタムデータを RUM に送信</p>
+        </div>
+        <button onclick="triggerCustomEvent()" class="px-4 py-2 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-400 text-sm font-medium rounded-lg border border-cyan-500/30 transition-colors">
+          実行
+        </button>
+      </div>
+
+      <div class="flex items-center justify-between p-4 bg-slate-900/50 rounded-lg border border-slate-800/60">
+        <div>
+          <p class="text-sm font-medium text-slate-200">ページ遷移 (Core Web Vitals)</p>
+          <p class="text-xs text-slate-500 mt-0.5">ページをリロードして LCP / FID / CLS を RUM に記録</p>
+        </div>
+        <button onclick="location.reload()" class="px-4 py-2 bg-slate-700/50 hover:bg-slate-700 text-slate-300 text-sm font-medium rounded-lg border border-slate-700 transition-colors">
+          リロード
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Log -->
+  <div class="bg-[#0a1628] border border-slate-800 rounded-xl p-6">
+    <h2 class="text-base font-semibold text-slate-100 mb-3">実行ログ</h2>
+    <div id="log" class="font-mono text-xs text-slate-400 space-y-1 min-h-16">
+      <div class="text-slate-600">— イベントを実行するとここに表示されます —</div>
+    </div>
+  </div>
+
+  <!-- Console Links -->
+  <div class="bg-[#0a1628] border border-slate-800 rounded-xl p-6">
+    <h2 class="text-base font-semibold text-slate-100 mb-3">CloudWatch コンソール確認先</h2>
+    <ul class="space-y-2 text-sm text-slate-400">
+      <li class="flex items-start gap-2">
+        <span class="text-cyan-500 mt-0.5">→</span>
+        <span>Application monitoring → <strong class="text-slate-300">RUM</strong> → app monitor 選択</span>
+      </li>
+      <li class="flex items-start gap-2">
+        <span class="text-cyan-500 mt-0.5">→</span>
+        <span>JS エラー: <strong class="text-slate-300">Errors タブ → JavaScript errors</strong></span>
+      </li>
+      <li class="flex items-start gap-2">
+        <span class="text-cyan-500 mt-0.5">→</span>
+        <span>HTTP リクエスト: <strong class="text-slate-300">HTTP requests タブ → Status codes</strong></span>
+      </li>
+      <li class="flex items-start gap-2">
+        <span class="text-cyan-500 mt-0.5">→</span>
+        <span>Core Web Vitals: <strong class="text-slate-300">Performance タブ → Page load steps</strong></span>
+      </li>
+      <li class="flex items-start gap-2">
+        <span class="text-cyan-500 mt-0.5">→</span>
+        <span>X-Ray 連携トレース: <strong class="text-slate-300">User sessions → Session detail → Traces</strong></span>
+      </li>
+    </ul>
+  </div>
+
+</div>
+
+<script>
+function addLog(msg, color) {
+  const el = document.getElementById('log');
+  const ts  = new Date().toLocaleTimeString('ja-JP');
+  const line = document.createElement('div');
+  line.className = color || 'text-slate-300';
+  line.textContent = `[${ts}] ${msg}`;
+  if (el.children.length === 1 && el.children[0].classList.contains('text-slate-600')) {
+    el.innerHTML = '';
+  }
+  el.appendChild(line);
+}
+
+function triggerJsError() {
+  addLog('JavaScript エラーを発生させます...', 'text-slate-400');
+  try {
+    // intentional ReferenceError so RUM captures it
+    const x = _undefinedRumTestVar_.property;
+  } catch (e) {
+    addLog(`エラー発生: ${e.message}`, 'text-red-400');
+    setTimeout(() => { throw e; }, 0);
+  }
+}
+
+async function triggerHttpError() {
+  addLog('404 リクエスト送信中...', 'text-slate-400');
+  try {
+    const r = await fetch('/api/devices/RUMTEST-NONEXISTENT-404');
+    addLog(`レスポンス: HTTP ${r.status}`, r.ok ? 'text-green-400' : 'text-orange-400');
+  } catch (e) {
+    addLog(`ネットワークエラー: ${e.message}`, 'text-orange-400');
+  }
+}
+
+function triggerCustomEvent() {
+  if (typeof cwr === 'function') {
+    cwr('recordEvent', {
+      type: 'rum_manual_test',
+      data: {
+        action: 'button_click',
+        page: '/rum-test',
+        environment: '{{ environment }}',
+        node_type: '{{ node_type }}',
+        ts: new Date().toISOString(),
+      }
+    });
+    addLog('カスタムイベント送信済み (cwr recordEvent)', 'text-cyan-400');
+  } else {
+    addLog('RUM クライアント未初期化 — CW_RUM_APP_MONITOR_ID を確認してください', 'text-yellow-400');
+  }
+}
+
+window.addEventListener('load', () => {
+  const el = document.getElementById('rum-init-status');
+  if (!el) return;
+  setTimeout(() => {
+    if (typeof cwr === 'function' && window.AwsRumClient) {
+      el.textContent = '✓ AwsRumClient 初期化済み';
+      el.className = 'text-xs text-cyan-400';
+    } else {
+      el.textContent = '✗ AwsRumClient 未検出 — snippet の読み込みを確認してください';
+      el.className = 'text-xs text-red-400';
+    }
+  }, 1500);
+});
+</script>
+{% endblock %}

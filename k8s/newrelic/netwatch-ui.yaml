@@ -3,7 +3,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: netwatch-ui
-  namespace: demo-ec2
+  namespace: demo-newrelic
   labels:
     app: netwatch-ui
 spec:
@@ -15,13 +15,12 @@ spec:
     metadata:
       labels:
         app: netwatch-ui
-        environment: demo-ec2
+        environment: demo-newrelic
       annotations:
-        instrumentation.opentelemetry.io/inject-python: "true"
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "8000"
+        # New Relic k8s-agents-operator injects NR Python agent as init container
+        instrumentation.newrelic.com/inject-python: "newrelic"
     spec:
-      serviceAccountName: app-signals-sa
+      serviceAccountName: newrelic-app-sa
       nodeSelector:
         node-type: ec2
       containers:
@@ -34,33 +33,23 @@ spec:
             - name: SERVICE_NAME
               value: "netwatch-ui"
             - name: ENVIRONMENT
-              value: "demo-ec2"
+              value: "demo-newrelic"
             - name: NODE_TYPE
               value: "EC2"
             - name: DEVICE_API_URL
               value: "http://device-api:8000"
             - name: ALERT_API_URL
               value: "http://alert-api:8000"
-            - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: "http://cloudwatch-agent.amazon-cloudwatch:4316"
-            - name: OTEL_LOGS_EXPORTER
-              value: "none"
-            - name: OTEL_SERVICE_NAME
-              value: "netwatch-ui"
-            - name: CW_RUM_APP_MONITOR_ID
-              value: "${CW_RUM_APP_MONITOR_ID}"
-            - name: CW_RUM_IDENTITY_POOL_ID
-              value: "${CW_RUM_IDENTITY_POOL_ID}"
-            - name: CW_RUM_REGION
-              value: "${CW_RUM_REGION}"
-            - name: STATSD_HOST
+            - name: NEW_RELIC_APP_NAME
+              value: "netwatch-ui (demo-newrelic)"
+            - name: NEW_RELIC_DISTRIBUTED_TRACING_ENABLED
+              value: "true"
+            - name: NR_BROWSER_SNIPPET
               valueFrom:
-                fieldRef:
-                  fieldPath: status.hostIP
-            - name: STATSD_PORT
-              value: "8125"
-            - name: OTEL_RESOURCE_ATTRIBUTES
-              value: "deployment.environment=demo-ec2,k8s.namespace.name=demo-ec2"
+                secretKeyRef:
+                  name: newrelic-secret
+                  key: browser-snippet
+                  optional: true
             - name: POD_NAME
               valueFrom:
                 fieldRef:
@@ -93,7 +82,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: netwatch-ui
-  namespace: demo-ec2
+  namespace: demo-newrelic
   labels:
     app: netwatch-ui
   annotations:

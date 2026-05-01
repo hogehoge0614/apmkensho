@@ -65,28 +65,53 @@ data:
         Time_Format         %Y-%m-%dT%H:%M:%S.%L%z
 FBIT
 
+echo "==> Creating database secret (device-api-db) for demo-fargate..."
+RDS_ENDPOINT=$(cd "${ROOT_DIR}/infra/terraform" && terraform output -raw rds_endpoint 2>/dev/null || echo "")
+RDS_PASSWORD=$(cd "${ROOT_DIR}/infra/terraform" && terraform output -raw rds_password 2>/dev/null || echo "")
+
+if [ -n "${RDS_ENDPOINT}" ]; then
+  DB_URL="postgresql://netwatch:${RDS_PASSWORD}@${RDS_ENDPOINT}/netwatch"
+  kubectl create secret generic device-api-db \
+    --namespace demo-fargate \
+    --from-literal=DATABASE_URL="${DB_URL}" \
+    --dry-run=client -o yaml | kubectl apply -f -
+  echo "  Secret device-api-db created/updated."
+else
+  echo "  [WARN] rds_endpoint not found — device-api will fail to start."
+fi
+
+echo ""
 echo "==> Deploying Fargate manifests to demo-fargate namespace..."
 for manifest in "${ROOT_DIR}/k8s/fargate/"*.yaml; do
   echo "  Applying: $(basename ${manifest})"
-  sed "s|\${ECR_REGISTRY}|${ECR_REGISTRY}|g" "${manifest}" | kubectl apply -f -
+  sed \
+    -e "s|\${ECR_REGISTRY}|${ECR_REGISTRY}|g" \
+    -e "s|\${CW_RUM_APP_MONITOR_ID}|${CW_RUM_APP_MONITOR_ID:-}|g" \
+    -e "s|\${CW_RUM_IDENTITY_POOL_ID}|${CW_RUM_IDENTITY_POOL_ID:-}|g" \
+    -e "s|\${CW_RUM_REGION}|${CW_RUM_REGION:-ap-northeast-1}|g" \
+    "${manifest}" | kubectl apply -f -
 done
 
 echo ""
 echo "==> Waiting for Fargate pods (may take 1-2 min for Fargate node provisioning)..."
-kubectl rollout status deployment/frontend-ui -n demo-fargate --timeout=180s || true
-kubectl rollout status deployment/backend-for-frontend -n demo-fargate --timeout=180s || true
+kubectl rollout status deployment/metrics-collector -n demo-fargate --timeout=180s || true
+kubectl rollout status deployment/device-api        -n demo-fargate --timeout=180s || true
+kubectl rollout status deployment/alert-api         -n demo-fargate --timeout=180s || true
+kubectl rollout status deployment/netwatch-ui       -n demo-fargate --timeout=180s || true
 
 echo ""
 echo "==> Fargate Pods:"
 kubectl get pods -n demo-fargate -o wide
 
 echo ""
-LB_HOST=$(kubectl get svc frontend-ui -n demo-fargate -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
+LB_HOST=$(kubectl get svc netwatch-ui -n demo-fargate -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
 if [ -n "${LB_HOST}" ]; then
-  echo "Done. Fargate frontend URL: http://${LB_HOST}"
+  echo "Done. Fargate NetWatch UI URL: http://${LB_HOST}"
   echo "Set FARGATE_BASE=http://${LB_HOST} in .env"
 else
-  echo "Done. LoadBalancer is provisioning. Run the following to get the URL:"
-  echo "  kubectl get svc frontend-ui -n demo-fargate -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'"
+  echo "Done. LoadBalancer is provisioning. Run:"
+  echo "  kubectl get svc netwatch-ui -n demo-fargate -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'"
 fi
-echo "NOTE: Fargate pods run on virtual nodes - DaemonSet-based agents do not apply."
+echo ""
+echo "NOTE: Fargate pods run on virtual nodes — CloudWatch Agent DaemonSet does not apply."
+echo "      OTel SDK sends traces to cloudwatch-agent Service in amazon-cloudwatch namespace."

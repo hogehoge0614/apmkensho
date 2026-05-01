@@ -1,22 +1,75 @@
 import os
 import json
 import time
+import socket
 import logging
 from typing import Optional
 
 import httpx
-from fastapi import FastAPI, Request, Query, HTTPException, Form
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi import FastAPI, Request, Query, HTTPException
+from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pythonjsonlogger import jsonlogger
 
-SERVICE       = os.getenv("SERVICE_NAME",  "netwatch-ui")
-ENVIRONMENT   = os.getenv("ENVIRONMENT",   "demo-ec2")
-NODE_TYPE     = os.getenv("NODE_TYPE",     "EC2")
-DEVICE_API    = os.getenv("DEVICE_API_URL","http://device-api:8000")
-ALERT_API     = os.getenv("ALERT_API_URL", "http://alert-api:8000")
-CW_RUM_SNIPPET  = os.getenv("CW_RUM_SNIPPET",  "")
+SERVICE     = os.getenv("SERVICE_NAME",  "netwatch-ui")
+ENVIRONMENT = os.getenv("ENVIRONMENT",   "demo-ec2")
+NODE_TYPE   = os.getenv("NODE_TYPE",     "EC2")
+DEVICE_API  = os.getenv("DEVICE_API_URL","http://device-api:8000")
+ALERT_API   = os.getenv("ALERT_API_URL", "http://alert-api:8000")
 NR_BROWSER_SNIPPET = os.getenv("NR_BROWSER_SNIPPET", "")
+
+# CloudWatch RUM: generate snippet from individual env vars
+_CW_RUM_APP_ID  = os.getenv("CW_RUM_APP_MONITOR_ID", "")
+_CW_RUM_POOL_ID = os.getenv("CW_RUM_IDENTITY_POOL_ID", "")
+_CW_RUM_REGION  = os.getenv("CW_RUM_REGION", "ap-northeast-1")
+
+
+def _build_rum_snippet() -> str:
+    if not _CW_RUM_APP_ID or not _CW_RUM_POOL_ID:
+        return ""
+    return (
+        "<script>\n"
+        "(function(n,i,v,r,s,c,x,z){"
+        "x=window.AwsRumClient={q:[],n:n,i:i,v:v,r:r,c:c};"
+        "window[n]=function(){x.q.push(arguments)};"
+        "z=document.createElement('script');"
+        "z.async=true;z.src=s;"
+        "document.head.insertBefore(z,document.head.getElementsByTagName('script')[0]);"
+        "})(\n"
+        f"  'cwr',\n"
+        f"  '{_CW_RUM_APP_ID}',\n"
+        f"  '1.0.0',\n"
+        f"  '{_CW_RUM_REGION}',\n"
+        f"  'https://client.rum.us-east-1.amazonaws.com/1.12.0/cwr.js',\n"
+        f"  {{sessionSampleRate:1,"
+        f"identityPoolId:'{_CW_RUM_POOL_ID}',"
+        f"endpoint:'https://dataplane.rum.{_CW_RUM_REGION}.amazonaws.com',"
+        f"telemetries:['performance','errors','http'],"
+        f"allowCookies:true,"
+        f"enableXRay:true}}\n"
+        ");\n"
+        "</script>"
+    )
+
+
+CW_RUM_SNIPPET = _build_rum_snippet()
+
+# StatsD (UDP — silently dropped if CloudWatch Agent not listening)
+_STATSD_HOST = os.getenv("STATSD_HOST", "localhost")
+_STATSD_PORT = int(os.getenv("STATSD_PORT", "8125"))
+_METRICS_NS  = "netwatch.ui"
+_statsd_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+
+def _statsd(metric: str, value: float, mtype: str = "ms") -> None:
+    try:
+        _statsd_sock.sendto(
+            f"{_METRICS_NS}.{metric}:{value}|{mtype}".encode(),
+            (_STATSD_HOST, _STATSD_PORT),
+        )
+    except Exception:
+        pass
+
 
 logger = logging.getLogger(SERVICE)
 _h = logging.StreamHandler()
@@ -73,6 +126,8 @@ async def dashboard(request: Request):
         critical_devices = [d for d in devices if d["status"] in ("critical", "offline")]
         ms = int((time.time() - start) * 1000)
         _log("dashboard", "/", ms)
+        _statsd("page.dashboard_ms", ms)
+        _statsd("page.views", 1, "c")
         return templates.TemplateResponse("dashboard.html", _ctx(
             request,
             total_devices=len(devices),
@@ -85,6 +140,7 @@ async def dashboard(request: Request):
     except Exception as e:
         ms = int((time.time() - start) * 1000)
         _log("dashboard", "/", ms, 500, str(e))
+        _statsd("error.count", 1, "c")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -103,6 +159,8 @@ async def devices_page(
         data = r.json()
         ms = int((time.time() - start) * 1000)
         _log("devices_list", "/devices", ms, filters=params)
+        _statsd("page.devices_ms", ms)
+        _statsd("page.views", 1, "c")
         return templates.TemplateResponse("devices.html", _ctx(
             request,
             devices=data.get("devices", []),
@@ -113,6 +171,7 @@ async def devices_page(
     except Exception as e:
         ms = int((time.time() - start) * 1000)
         _log("devices_list", "/devices", ms, 500, str(e))
+        _statsd("error.count", 1, "c")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -129,6 +188,8 @@ async def device_detail(device_id: str, request: Request):
         device_alerts = [a for a in all_alerts if a["device_id"] == device_id]
         ms = int((time.time() - start) * 1000)
         _log("device_detail", f"/devices/{device_id}", ms, device_id=device_id)
+        _statsd("page.device_detail_ms", ms)
+        _statsd("page.views", 1, "c")
         return templates.TemplateResponse("device_detail.html", _ctx(
             request, device=device, device_alerts=device_alerts,
         ))
@@ -137,6 +198,7 @@ async def device_detail(device_id: str, request: Request):
     except Exception as e:
         ms = int((time.time() - start) * 1000)
         _log("device_detail", f"/devices/{device_id}", ms, 500, str(e))
+        _statsd("error.count", 1, "c")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -153,6 +215,8 @@ async def alerts_page(
         data = r.json()
         ms = int((time.time() - start) * 1000)
         _log("alerts_list", "/alerts", ms)
+        _statsd("page.alerts_ms", ms)
+        _statsd("page.views", 1, "c")
         return templates.TemplateResponse("alerts.html", _ctx(
             request,
             alerts=data.get("alerts", []),
@@ -162,6 +226,7 @@ async def alerts_page(
     except Exception as e:
         ms = int((time.time() - start) * 1000)
         _log("alerts_list", "/alerts", ms, 500, str(e))
+        _statsd("error.count", 1, "c")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -173,6 +238,17 @@ async def chaos_page(request: Request):
     except Exception:
         chaos_state = {}
     return templates.TemplateResponse("chaos.html", _ctx(request, chaos_state=chaos_state))
+
+
+@app.get("/rum-test", response_class=HTMLResponse)
+async def rum_test_page(request: Request):
+    rum_enabled = bool(_CW_RUM_APP_ID and _CW_RUM_POOL_ID)
+    return templates.TemplateResponse("rum_test.html", _ctx(
+        request,
+        rum_enabled=rum_enabled,
+        rum_app_id=_CW_RUM_APP_ID,
+        rum_region=_CW_RUM_REGION,
+    ))
 
 
 # ── API proxy for chaos (called from chaos page via fetch) ──
@@ -217,6 +293,7 @@ async def api_resolve_alert(alert_id: str):
 @app.on_event("shutdown")
 async def shutdown():
     await _client.aclose()
+    _statsd_sock.close()
 
 
 if __name__ == "__main__":

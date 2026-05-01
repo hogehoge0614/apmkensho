@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import socket
 import logging
 import threading
 import random
@@ -11,6 +12,8 @@ from typing import Optional
 import psycopg2
 import psycopg2.pool
 import psycopg2.extras
+from opentelemetry.instrumentation.psycopg2 import Psycopg2Instrumentor
+Psycopg2Instrumentor().instrument(enable_commenter=True, commenter_options={})
 import httpx
 
 from fastapi import FastAPI, Query, HTTPException
@@ -21,6 +24,21 @@ SERVICE = os.getenv("SERVICE_NAME", "device-api")
 ENVIRONMENT = os.getenv("ENVIRONMENT", "demo-ec2")
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 METRICS_COLLECTOR_URL = os.getenv("METRICS_COLLECTOR_URL", "http://metrics-collector:8000")
+
+# StatsD (UDP — silently dropped if CloudWatch Agent not listening)
+_STATSD_HOST = os.getenv("STATSD_HOST", "localhost")
+_STATSD_PORT = int(os.getenv("STATSD_PORT", "8125"))
+_statsd_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+
+def _statsd(metric: str, value: float, mtype: str = "ms") -> None:
+    try:
+        _statsd_sock.sendto(
+            f"netwatch.device.{metric}:{value}|{mtype}".encode(),
+            (_STATSD_HOST, _STATSD_PORT),
+        )
+    except Exception:
+        pass
 
 logger = logging.getLogger(SERVICE)
 _h = logging.StreamHandler()
@@ -89,9 +107,11 @@ def get_conn():
 
 def _init_db():
     global _pool
-    _pool = psycopg2.pool.ThreadedConnectionPool(1, 5, DATABASE_URL)
+    _pool = psycopg2.pool.ThreadedConnectionPool(
+        1, 5, DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor
+    )
     with get_conn() as conn:
-        with conn.cursor() as cur:
+        with conn.cursor(cursor_factory=psycopg2.extensions.cursor) as cur:
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS devices (
                     device_id   TEXT PRIMARY KEY,
@@ -168,7 +188,7 @@ async def list_devices(
     sql += " ORDER BY area, type, device_id"
 
     with get_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        with conn.cursor() as cur:
             cur.execute(sql, params)
             rows = cur.fetchall()
 
@@ -179,6 +199,8 @@ async def list_devices(
         "filters": {"area": area, "type": type, "status": status, "q": q},
         "duration_ms": duration_ms,
     }))
+    _statsd("list_ms", duration_ms)
+    _statsd("list_count", len(devices), "c")
     return {"devices": devices, "total": len(devices), "duration_ms": duration_ms}
 
 
@@ -193,7 +215,7 @@ async def get_device(device_id: str):
         raise HTTPException(status_code=500, detail="Device fetch failed (chaos: error injection active)")
 
     with get_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        with conn.cursor() as cur:
             cur.execute("SELECT * FROM devices WHERE device_id = %s", (device_id,))
             row = cur.fetchone()
 
@@ -230,6 +252,7 @@ async def get_device(device_id: str):
         "event": "get_device", "device_id": device_id,
         "status": device["status"], "duration_ms": duration_ms,
     }))
+    _statsd("detail_ms", duration_ms)
     return device
 
 

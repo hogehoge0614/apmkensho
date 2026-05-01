@@ -3,7 +3,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: alert-api
-  namespace: demo-ec2
+  namespace: demo-newrelic
   labels:
     app: alert-api
 spec:
@@ -15,13 +15,11 @@ spec:
     metadata:
       labels:
         app: alert-api
-        environment: demo-ec2
+        environment: demo-newrelic
       annotations:
-        instrumentation.opentelemetry.io/inject-python: "true"
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "8000"
+        instrumentation.newrelic.com/inject-python: "newrelic"
     spec:
-      serviceAccountName: app-signals-sa
+      serviceAccountName: newrelic-app-sa
       nodeSelector:
         node-type: ec2
       containers:
@@ -34,21 +32,11 @@ spec:
             - name: SERVICE_NAME
               value: "alert-api"
             - name: ENVIRONMENT
-              value: "demo-ec2"
-            - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: "http://cloudwatch-agent.amazon-cloudwatch:4316"
-            - name: OTEL_LOGS_EXPORTER
-              value: "none"
-            - name: OTEL_SERVICE_NAME
-              value: "alert-api"
-            - name: OTEL_RESOURCE_ATTRIBUTES
-              value: "deployment.environment=demo-ec2,k8s.namespace.name=demo-ec2"
-            - name: STATSD_HOST
-              valueFrom:
-                fieldRef:
-                  fieldPath: status.hostIP
-            - name: STATSD_PORT
-              value: "8125"
+              value: "demo-newrelic"
+            - name: NEW_RELIC_APP_NAME
+              value: "alert-api (demo-newrelic)"
+            - name: NEW_RELIC_DISTRIBUTED_TRACING_ENABLED
+              value: "true"
             - name: POD_NAME
               valueFrom:
                 fieldRef:
@@ -81,7 +69,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: alert-api
-  namespace: demo-ec2
+  namespace: demo-newrelic
   labels:
     app: alert-api
 spec:

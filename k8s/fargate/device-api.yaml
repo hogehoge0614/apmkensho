@@ -2,53 +2,52 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: alert-api
-  namespace: demo-ec2
+  name: device-api
+  namespace: demo-fargate
   labels:
-    app: alert-api
+    app: device-api
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: alert-api
+      app: device-api
   template:
     metadata:
       labels:
-        app: alert-api
-        environment: demo-ec2
+        app: device-api
+        environment: demo-fargate
       annotations:
         instrumentation.opentelemetry.io/inject-python: "true"
         prometheus.io/scrape: "true"
         prometheus.io/port: "8000"
     spec:
       serviceAccountName: app-signals-sa
-      nodeSelector:
-        node-type: ec2
       containers:
-        - name: alert-api
-          image: ${ECR_REGISTRY}/obs-poc/alert-api:latest
+        - name: device-api
+          image: ${ECR_REGISTRY}/obs-poc/device-api:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
           env:
             - name: SERVICE_NAME
-              value: "alert-api"
+              value: "device-api"
             - name: ENVIRONMENT
-              value: "demo-ec2"
+              value: "demo-fargate"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: "http://cloudwatch-agent.amazon-cloudwatch:4316"
             - name: OTEL_LOGS_EXPORTER
               value: "none"
             - name: OTEL_SERVICE_NAME
-              value: "alert-api"
+              value: "device-api"
             - name: OTEL_RESOURCE_ATTRIBUTES
-              value: "deployment.environment=demo-ec2,k8s.namespace.name=demo-ec2"
-            - name: STATSD_HOST
+              value: "deployment.environment=demo-fargate,k8s.namespace.name=demo-fargate"
+            - name: METRICS_COLLECTOR_URL
+              value: "http://metrics-collector:8000"
+            - name: DATABASE_URL
               valueFrom:
-                fieldRef:
-                  fieldPath: status.hostIP
-            - name: STATSD_PORT
-              value: "8125"
+                secretKeyRef:
+                  name: device-api-db
+                  key: DATABASE_URL
             - name: POD_NAME
               valueFrom:
                 fieldRef:
@@ -63,12 +62,12 @@ spec:
               memory: "128Mi"
             limits:
               cpu: "500m"
-              memory: "256Mi"
+              memory: "512Mi"
           readinessProbe:
             httpGet:
               path: /health
               port: 8000
-            initialDelaySeconds: 15
+            initialDelaySeconds: 30
             periodSeconds: 10
           livenessProbe:
             httpGet:
@@ -80,14 +79,14 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: alert-api
-  namespace: demo-ec2
+  name: device-api
+  namespace: demo-fargate
   labels:
-    app: alert-api
+    app: device-api
 spec:
   type: ClusterIP
   selector:
-    app: alert-api
+    app: device-api
   ports:
     - port: 8000
       targetPort: 8000

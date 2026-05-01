@@ -42,7 +42,12 @@ echo ""
 echo "==> Deploying EC2 manifests to demo-ec2 namespace..."
 for manifest in "${ROOT_DIR}/k8s/ec2/"*.yaml; do
   echo "  Applying: $(basename ${manifest})"
-  sed "s|\${ECR_REGISTRY}|${ECR_REGISTRY}|g" "${manifest}" | kubectl apply -f -
+  sed \
+    -e "s|\${ECR_REGISTRY}|${ECR_REGISTRY}|g" \
+    -e "s|\${CW_RUM_APP_MONITOR_ID}|${CW_RUM_APP_MONITOR_ID:-}|g" \
+    -e "s|\${CW_RUM_IDENTITY_POOL_ID}|${CW_RUM_IDENTITY_POOL_ID:-}|g" \
+    -e "s|\${CW_RUM_REGION}|${CW_RUM_REGION:-ap-northeast-1}|g" \
+    "${manifest}" | kubectl apply -f -
 done
 
 echo ""

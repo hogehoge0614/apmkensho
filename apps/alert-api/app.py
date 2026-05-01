@@ -2,6 +2,7 @@ import os
 import json
 import time
 import uuid
+import socket
 import logging
 import threading
 import random
@@ -14,6 +15,21 @@ from pythonjsonlogger import jsonlogger
 
 SERVICE = os.getenv("SERVICE_NAME", "alert-api")
 ENVIRONMENT = os.getenv("ENVIRONMENT", "demo-ec2")
+
+# StatsD (UDP — silently dropped if CloudWatch Agent not listening)
+_STATSD_HOST = os.getenv("STATSD_HOST", "localhost")
+_STATSD_PORT = int(os.getenv("STATSD_PORT", "8125"))
+_statsd_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+
+def _statsd(metric: str, value: float, mtype: str = "ms") -> None:
+    try:
+        _statsd_sock.sendto(
+            f"netwatch.alert.{metric}:{value}|{mtype}".encode(),
+            (_STATSD_HOST, _STATSD_PORT),
+        )
+    except Exception:
+        pass
 
 logger = logging.getLogger(SERVICE)
 _h = logging.StreamHandler()
@@ -115,6 +131,8 @@ async def list_alerts(
     logger.info(json.dumps({"event": "list_alerts", "count": len(result),
                             "filters": {"severity": severity, "area": area, "status": status},
                             "duration_ms": duration_ms}))
+    _statsd("list_ms", duration_ms)
+    _statsd("list_count", len(result), "c")
     return {"alerts": result, "total": len(result)}
 
 

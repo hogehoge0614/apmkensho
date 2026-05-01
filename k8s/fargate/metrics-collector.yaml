@@ -2,53 +2,45 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: alert-api
-  namespace: demo-ec2
+  name: metrics-collector
+  namespace: demo-fargate
   labels:
-    app: alert-api
+    app: metrics-collector
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: alert-api
+      app: metrics-collector
   template:
     metadata:
       labels:
-        app: alert-api
-        environment: demo-ec2
+        app: metrics-collector
+        environment: demo-fargate
       annotations:
         instrumentation.opentelemetry.io/inject-python: "true"
         prometheus.io/scrape: "true"
         prometheus.io/port: "8000"
     spec:
       serviceAccountName: app-signals-sa
-      nodeSelector:
-        node-type: ec2
       containers:
-        - name: alert-api
-          image: ${ECR_REGISTRY}/obs-poc/alert-api:latest
+        - name: metrics-collector
+          image: ${ECR_REGISTRY}/obs-poc/metrics-collector:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
           env:
             - name: SERVICE_NAME
-              value: "alert-api"
+              value: "metrics-collector"
             - name: ENVIRONMENT
-              value: "demo-ec2"
+              value: "demo-fargate"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: "http://cloudwatch-agent.amazon-cloudwatch:4316"
             - name: OTEL_LOGS_EXPORTER
               value: "none"
             - name: OTEL_SERVICE_NAME
-              value: "alert-api"
+              value: "metrics-collector"
             - name: OTEL_RESOURCE_ATTRIBUTES
-              value: "deployment.environment=demo-ec2,k8s.namespace.name=demo-ec2"
-            - name: STATSD_HOST
-              valueFrom:
-                fieldRef:
-                  fieldPath: status.hostIP
-            - name: STATSD_PORT
-              value: "8125"
+              value: "deployment.environment=demo-fargate,k8s.namespace.name=demo-fargate"
             - name: POD_NAME
               valueFrom:
                 fieldRef:
@@ -59,11 +51,11 @@ spec:
                   fieldPath: metadata.namespace
           resources:
             requests:
-              cpu: "100m"
-              memory: "128Mi"
+              cpu: "50m"
+              memory: "64Mi"
             limits:
-              cpu: "500m"
-              memory: "256Mi"
+              cpu: "200m"
+              memory: "128Mi"
           readinessProbe:
             httpGet:
               path: /health
@@ -80,14 +72,14 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: alert-api
-  namespace: demo-ec2
+  name: metrics-collector
+  namespace: demo-fargate
   labels:
-    app: alert-api
+    app: metrics-collector
 spec:
   type: ClusterIP
   selector:
-    app: alert-api
+    app: metrics-collector
   ports:
     - port: 8000
       targetPort: 8000
