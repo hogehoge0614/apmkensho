@@ -1,55 +1,74 @@
 ---
 # -------------------------------------------------------
-# CloudWatch Application Signals path
+# EKS on EC2 + CloudWatch Application Signals
 # -------------------------------------------------------
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: demo-ec2
+  name: eks-ec2-appsignals
   labels:
     monitoring: "enabled"
-    environment: "demo-ec2"
+    environment: "eks-ec2-appsignals"
 ---
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: demo-fargate
-  labels:
-    monitoring: "enabled"
-    environment: "demo-fargate"
----
-# ServiceAccount for Application Signals (EC2) - needs IRSA for X-Ray / CloudWatch
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: app-signals-sa
-  namespace: demo-ec2
+  namespace: eks-ec2-appsignals
   annotations:
     eks.amazonaws.com/role-arn: "${APP_SIGNALS_EC2_ROLE_ARN}"
 ---
-# ServiceAccount for Application Signals (Fargate) - needs IRSA for X-Ray / CloudWatch
+# -------------------------------------------------------
+# EKS on Fargate + CloudWatch Application Signals
+# -------------------------------------------------------
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: eks-fargate-appsignals
+  labels:
+    monitoring: "enabled"
+    environment: "eks-fargate-appsignals"
+---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: app-signals-sa
-  namespace: demo-fargate
+  namespace: eks-fargate-appsignals
   annotations:
     eks.amazonaws.com/role-arn: "${APP_SIGNALS_FARGATE_ROLE_ARN}"
 ---
 # -------------------------------------------------------
-# New Relic APM path
+# EKS on EC2 + New Relic APM
 # -------------------------------------------------------
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: demo-newrelic
+  name: eks-ec2-newrelic
   labels:
     monitoring: "enabled"
-    environment: "demo-newrelic"
+    environment: "eks-ec2-newrelic"
 ---
-# ServiceAccount for New Relic apps - no AWS IRSA needed (NR agent sends to NR cloud)
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: newrelic-app-sa
-  namespace: demo-newrelic
+  namespace: eks-ec2-newrelic
+---
+# -------------------------------------------------------
+# EKS on Fargate + New Relic APM (APM traces only)
+# NOTE: Infrastructure Agent (DaemonSet) is not supported on Fargate.
+#       Infra metrics, NR Logs Fluent Bit are unavailable in this environment.
+# -------------------------------------------------------
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: eks-fargate-newrelic
+  labels:
+    monitoring: "enabled"
+    environment: "eks-fargate-newrelic"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: newrelic-fargate-sa
+  namespace: eks-fargate-newrelic

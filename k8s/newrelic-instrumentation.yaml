@@ -1,16 +1,37 @@
 # New Relic APM Auto-Attach: Instrumentation CR
-# k8s-agents-operator watches this CR and injects the NR Python agent
-# as an init container into pods annotated with:
-#   instrumentation.newrelic.com/inject-python: "newrelic"
-#
-# This is the NR equivalent of the OTel Operator Instrumentation CR used
-# by the CloudWatch Application Signals path.
+# k8s-agents-operator watches these CRs and injects the NR Python agent
+# as an init container into pods annotated with the matching name.
 ---
+# For EKS on EC2 + New Relic (eks-ec2-newrelic namespace)
 apiVersion: newrelic.com/v1alpha2
 kind: Instrumentation
 metadata:
-  name: newrelic-python
-  namespace: demo-newrelic
+  name: newrelic
+  namespace: eks-ec2-newrelic
+spec:
+  agent:
+    language: python
+    image: newrelic/newrelic-python-init:latest
+  env:
+    - name: NEW_RELIC_LICENSE_KEY
+      valueFrom:
+        secretKeyRef:
+          name: newrelic-secret
+          key: license-key
+    - name: NEW_RELIC_DISTRIBUTED_TRACING_ENABLED
+      value: "true"
+    - name: NEW_RELIC_LOG
+      value: "stdout"
+    - name: NEW_RELIC_LOG_LEVEL
+      value: "info"
+---
+# For EKS on Fargate + New Relic (eks-fargate-newrelic namespace)
+# APM traces only — Infrastructure Agent (DaemonSet) is not available on Fargate.
+apiVersion: newrelic.com/v1alpha2
+kind: Instrumentation
+metadata:
+  name: newrelic-fargate
+  namespace: eks-fargate-newrelic
 spec:
   agent:
     language: python

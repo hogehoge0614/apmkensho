@@ -1,0 +1,93 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: device-api
+  namespace: eks-fargate-appsignals
+  labels:
+    app: device-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: device-api
+  template:
+    metadata:
+      labels:
+        app: device-api
+        environment: eks-fargate-appsignals
+      annotations:
+        instrumentation.opentelemetry.io/inject-python: "true"
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+    spec:
+      serviceAccountName: app-signals-sa
+      containers:
+        - name: device-api
+          image: ${ECR_REGISTRY}/obs-poc/device-api:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          env:
+            - name: SERVICE_NAME
+              value: "device-api"
+            - name: ENVIRONMENT
+              value: "eks-fargate-appsignals"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://cloudwatch-agent.amazon-cloudwatch:4316"
+            - name: OTEL_LOGS_EXPORTER
+              value: "none"
+            - name: OTEL_SERVICE_NAME
+              value: "device-api"
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "deployment.environment=eks-fargate-appsignals,k8s.namespace.name=eks-fargate-appsignals"
+            - name: METRICS_COLLECTOR_URL
+              value: "http://metrics-collector:8000"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: device-api-db
+                  key: DATABASE_URL
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: device-api
+  namespace: eks-fargate-appsignals
+  labels:
+    app: device-api
+spec:
+  type: ClusterIP
+  selector:
+    app: device-api
+  ports:
+    - port: 8000
+      targetPort: 8000
+      name: http

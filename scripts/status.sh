@@ -13,12 +13,20 @@ echo "=== EKS Nodes ==="
 kubectl get nodes -o wide 2>/dev/null || echo "Cannot connect to cluster"
 
 echo ""
-echo "=== demo-ec2 Pods ==="
-kubectl get pods -n demo-ec2 -o wide 2>/dev/null || echo "Namespace not found"
+echo "=== [1/4] EKS on EC2 + App Signals (eks-ec2-appsignals) ==="
+kubectl get pods -n eks-ec2-appsignals -o wide 2>/dev/null || echo "Namespace not found"
 
 echo ""
-echo "=== demo-fargate Pods ==="
-kubectl get pods -n demo-fargate -o wide 2>/dev/null || echo "Namespace not found"
+echo "=== [2/4] EKS on Fargate + App Signals (eks-fargate-appsignals) ==="
+kubectl get pods -n eks-fargate-appsignals -o wide 2>/dev/null || echo "Namespace not found"
+
+echo ""
+echo "=== [3/4] EKS on EC2 + New Relic (eks-ec2-newrelic) ==="
+kubectl get pods -n eks-ec2-newrelic -o wide 2>/dev/null || echo "Namespace not found"
+
+echo ""
+echo "=== [4/4] EKS on Fargate + New Relic (eks-fargate-newrelic) ==="
+kubectl get pods -n eks-fargate-newrelic -o wide 2>/dev/null || echo "Namespace not found"
 
 echo ""
 echo "=== CloudWatch Agent Pods (amazon-cloudwatch) ==="
@@ -40,11 +48,11 @@ echo "=== Helm Releases ==="
 helm list -A 2>/dev/null || echo "Cannot list Helm releases"
 
 echo ""
-echo "=== Services ==="
-echo "--- demo-ec2 ---"
-kubectl get svc -n demo-ec2 2>/dev/null || true
-echo "--- demo-fargate ---"
-kubectl get svc -n demo-fargate 2>/dev/null || true
+echo "=== Services (LoadBalancer URLs) ==="
+for ns in eks-ec2-appsignals eks-fargate-appsignals eks-ec2-newrelic eks-fargate-newrelic; do
+  echo "--- ${ns} ---"
+  kubectl get svc -n "${ns}" 2>/dev/null || true
+done
 
 echo ""
 echo "=== CloudWatch Metric Streams ==="

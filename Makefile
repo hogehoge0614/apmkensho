@@ -1,19 +1,17 @@
 # ============================================================
 # Observability PoC - Makefile
-# CloudWatch + Application Signals vs New Relic Full Stack
-# 3 environments: EC2+AppSignals, Fargate+AppSignals, EC2+NewRelic
+# 4 environments: EKS on EC2/Fargate × App Signals/New Relic
 # ============================================================
 
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-# Load .env if present
 -include .env
 export
 
 AWS_REGION    ?= ap-northeast-1
 CLUSTER_NAME  ?= obs-poc
-NS            ?= demo-ec2
+NS            ?= eks-ec2-appsignals
 SVC           ?= netwatch-ui
 TAIL          ?= 50
 AWS_ACCOUNT_ID ?= $(shell aws sts get-caller-identity --query Account --output text 2>/dev/null || echo "unknown")
@@ -29,11 +27,11 @@ SCRIPTS_DIR := scripts
         ec2-appsignals-enable-rum ec2-appsignals-enable-custom-metrics \
         fargate-appsignals-deploy fargate-appsignals-verify fargate-appsignals-down \
         ec2-newrelic-deploy ec2-newrelic-verify ec2-newrelic-down \
+        fargate-newrelic-deploy fargate-newrelic-verify fargate-newrelic-down \
         install-cloudwatch-full install-newrelic-full \
         load load-normal load-devices load-detail load-slow load-error load-storm \
         status logs compare-check \
-        port-forward-ec2 port-forward-fargate port-forward-newrelic \
-        deploy-ec2 deploy-fargate deploy-newrelic \
+        port-forward-ec2 port-forward-fargate port-forward-newrelic port-forward-fargate-newrelic \
         down tf-init tf-plan tf-apply tf-destroy destroy-check
 
 # ============================================================
@@ -42,60 +40,71 @@ SCRIPTS_DIR := scripts
 help:
 	@echo ""
 	@echo "  NetWatch Observability PoC"
-	@echo "  AWS CloudWatch Application Signals  vs  New Relic Full Stack"
+	@echo "  4 environments: EKS on EC2/Fargate × App Signals/New Relic"
 	@echo ""
 	@echo "  Prerequisites: aws cli, kubectl, helm, docker, terraform"
 	@echo "  Setup: cp .env.example .env && vi .env"
+	@echo "  Docs: docs/setup.md (セットアップ手順)"
 	@echo ""
-	@echo "  ┌─────────────────────────────────────────────────────────────┐"
-	@echo "  │  Quickstart — EC2 + App Signals (recommended start)         │"
-	@echo "  │                                                             │"
-	@echo "  │  1. make check-prereq             # verify tools & auth     │"
-	@echo "  │  2. make up                       # create EKS + resources  │"
-	@echo "  │  3. make create-secrets           # create K8s secrets      │"
-	@echo "  │  4. make build-push               # build & push images     │"
-	@echo "  │  5. make install-cloudwatch-full  # install CW stack        │"
-	@echo "  │  6. make ec2-appsignals-deploy    # deploy apps             │"
-	@echo "  │  7. make ec2-appsignals-verify    # check everything        │"
-	@echo "  │  8. make load                     # generate traffic        │"
-	@echo "  └─────────────────────────────────────────────────────────────┘"
+	@echo "  ┌─────────────────────────────────────────────────────────────────────┐"
+	@echo "  │  Environment Matrix                                                 │"
+	@echo "  │                                                                     │"
+	@echo "  │                  App Signals          New Relic                     │"
+	@echo "  │  EKS on EC2    eks-ec2-appsignals   eks-ec2-newrelic               │"
+	@echo "  │  EKS on Fargate eks-fargate-appsignals eks-fargate-newrelic (*)    │"
+	@echo "  │                                                                     │"
+	@echo "  │  (*) APM traces only. Infra Agent (DaemonSet) not available.       │"
+	@echo "  └─────────────────────────────────────────────────────────────────────┘"
 	@echo ""
-	@echo "  ── Environments ────────────────────────────────────────────────"
-	@echo "    EC2 + App Signals:"
-	@echo "      make ec2-appsignals-deploy          # deploy to demo-ec2"
-	@echo "      make ec2-appsignals-enable-rum      # enable CW RUM browser monitoring"
-	@echo "      make ec2-appsignals-enable-custom-metrics  # enable StatsD metrics"
-	@echo "      make ec2-appsignals-verify          # verify pods/services"
-	@echo "      make ec2-appsignals-down            # delete demo-ec2 namespace"
+	@echo "  ── Shared Setup (run once) ─────────────────────────────────────────────"
+	@echo "    make check-prereq             # verify tools & AWS auth"
+	@echo "    make up                       # create EKS + resources (~20 min)"
+	@echo "    make create-secrets           # create K8s secrets"
+	@echo "    make build-push               # build & push images to ECR (~10 min)"
 	@echo ""
-	@echo "    Fargate + App Signals:"
-	@echo "      make fargate-appsignals-deploy      # deploy to demo-fargate"
-	@echo "      make fargate-appsignals-verify      # verify pods/services"
-	@echo "      make fargate-appsignals-down        # delete demo-fargate namespace"
+	@echo "  ── EKS on EC2 + App Signals (eks-ec2-appsignals) ──────────────────────"
+	@echo "    make install-cloudwatch-full"
+	@echo "    make ec2-appsignals-deploy"
+	@echo "    make ec2-appsignals-verify"
+	@echo "    make ec2-appsignals-enable-rum"
+	@echo "    make ec2-appsignals-enable-custom-metrics"
+	@echo "    make ec2-appsignals-down"
 	@echo ""
-	@echo "    EC2 + New Relic:"
-	@echo "      make install-newrelic-full          # install NR stack (requires license key)"
-	@echo "      make ec2-newrelic-deploy            # deploy to demo-newrelic"
-	@echo "      make ec2-newrelic-verify            # verify pods/services"
-	@echo "      make ec2-newrelic-down              # delete demo-newrelic namespace"
+	@echo "  ── EKS on Fargate + App Signals (eks-fargate-appsignals) ──────────────"
+	@echo "    make install-cloudwatch-full  # shared with EC2"
+	@echo "    make fargate-appsignals-deploy"
+	@echo "    make fargate-appsignals-verify"
+	@echo "    make fargate-appsignals-down"
 	@echo ""
-	@echo "  ── Traffic Generation ──────────────────────────────────────────"
-	@echo "    make load                   # all scenarios (default)"
-	@echo "    make load-normal            # dashboard + device list"
-	@echo "    make load-detail            # device detail pages (3-hop traces)"
-	@echo "    make load-slow              # slow query scenario"
-	@echo "    make load-error             # error injection scenario"
-	@echo "    make load-storm             # alert storm scenario"
+	@echo "  ── EKS on EC2 + New Relic (eks-ec2-newrelic) ──────────────────────────"
+	@echo "    make install-newrelic-full    # requires NEW_RELIC_LICENSE_KEY in .env"
+	@echo "    make ec2-newrelic-deploy"
+	@echo "    make ec2-newrelic-verify"
+	@echo "    make ec2-newrelic-down"
 	@echo ""
-	@echo "  ── Utilities ───────────────────────────────────────────────────"
-	@echo "    make check-prereq           # verify tools & AWS auth"
-	@echo "    make aws-whoami             # show current AWS identity"
-	@echo "    make kube-context           # show current k8s context + nodes"
-	@echo "    make status                 # cluster/pod/addon status"
-	@echo "    make logs [NS=demo-ec2] [SVC=netwatch-ui]  # tail structured logs"
-	@echo "    make port-forward-ec2       # http://localhost:8080"
-	@echo "    make compare-check         # show observability comparison guide"
-	@echo "    make down                   # destroy all resources"
+	@echo "  ── EKS on Fargate + New Relic (eks-fargate-newrelic) [APM only] ───────"
+	@echo "    make install-newrelic-full    # shared with EC2"
+	@echo "    make fargate-newrelic-deploy"
+	@echo "    make fargate-newrelic-verify"
+	@echo "    make fargate-newrelic-down"
+	@echo ""
+	@echo "  ── Traffic Generation ──────────────────────────────────────────────────"
+	@echo "    make load           # all scenarios to all running environments"
+	@echo "    make load-normal    # dashboard + device list"
+	@echo "    make load-detail    # device detail (3-hop traces)"
+	@echo "    make load-slow      # slow query scenario"
+	@echo "    make load-error     # error injection scenario"
+	@echo "    make load-storm     # alert storm scenario"
+	@echo ""
+	@echo "  ── Utilities ───────────────────────────────────────────────────────────"
+	@echo "    make status                               # all 4 environments"
+	@echo "    make logs [NS=eks-ec2-appsignals] [SVC=netwatch-ui]"
+	@echo "    make port-forward-ec2                     # http://localhost:8080"
+	@echo "    make port-forward-fargate                 # http://localhost:8081"
+	@echo "    make port-forward-newrelic                # http://localhost:8082"
+	@echo "    make port-forward-fargate-newrelic        # http://localhost:8083"
+	@echo "    make compare-check                        # comparison guide"
+	@echo "    make down                                 # destroy all resources"
 	@echo ""
 
 # ============================================================
@@ -161,19 +170,19 @@ install-newrelic-full:
 	@$(SCRIPTS_DIR)/install-newrelic-full.sh
 
 # ============================================================
-# EC2 + App Signals
+# EKS on EC2 + App Signals  (namespace: eks-ec2-appsignals)
 # ============================================================
 ec2-appsignals-deploy:
 	@$(SCRIPTS_DIR)/deploy-ec2.sh
 
 ec2-appsignals-verify:
-	@echo "==> EC2 + App Signals — Status"
+	@echo "==> EKS on EC2 + App Signals — Status"
 	@echo ""
-	@echo "--- Pods (demo-ec2) ---"
-	@kubectl get pods -n demo-ec2 -o wide
+	@echo "--- Pods (eks-ec2-appsignals) ---"
+	@kubectl get pods -n eks-ec2-appsignals -o wide
 	@echo ""
 	@echo "--- Services ---"
-	@kubectl get svc -n demo-ec2
+	@kubectl get svc -n eks-ec2-appsignals
 	@echo ""
 	@echo "--- CloudWatch Agent ---"
 	@kubectl get pods -n amazon-cloudwatch 2>/dev/null || echo "  (amazon-cloudwatch namespace not found)"
@@ -191,51 +200,75 @@ ec2-appsignals-enable-custom-metrics:
 	@$(SCRIPTS_DIR)/enable-custom-metrics.sh
 
 ec2-appsignals-down:
-	@echo "==> Deleting demo-ec2 namespace..."
-	@kubectl delete namespace demo-ec2 --timeout=120s 2>/dev/null || true
+	@echo "==> Deleting eks-ec2-appsignals namespace..."
+	@kubectl delete namespace eks-ec2-appsignals --timeout=120s 2>/dev/null || true
 	@echo "Done."
 
 # ============================================================
-# Fargate + App Signals
+# EKS on Fargate + App Signals  (namespace: eks-fargate-appsignals)
 # ============================================================
 fargate-appsignals-deploy:
 	@$(SCRIPTS_DIR)/deploy-fargate.sh
 
 fargate-appsignals-verify:
-	@echo "==> Fargate + App Signals — Status"
+	@echo "==> EKS on Fargate + App Signals — Status"
 	@echo ""
-	@echo "--- Pods (demo-fargate) ---"
-	@kubectl get pods -n demo-fargate -o wide
+	@echo "--- Pods (eks-fargate-appsignals) ---"
+	@kubectl get pods -n eks-fargate-appsignals -o wide
 	@echo ""
 	@echo "--- Services ---"
-	@kubectl get svc -n demo-fargate
+	@kubectl get svc -n eks-fargate-appsignals
 
 fargate-appsignals-down:
-	@echo "==> Deleting demo-fargate namespace..."
-	@kubectl delete namespace demo-fargate --timeout=120s 2>/dev/null || true
+	@echo "==> Deleting eks-fargate-appsignals namespace..."
+	@kubectl delete namespace eks-fargate-appsignals --timeout=120s 2>/dev/null || true
 	@echo "Done."
 
 # ============================================================
-# EC2 + New Relic
+# EKS on EC2 + New Relic  (namespace: eks-ec2-newrelic)
 # ============================================================
 ec2-newrelic-deploy:
 	@$(SCRIPTS_DIR)/deploy-newrelic.sh
 
 ec2-newrelic-verify:
-	@echo "==> EC2 + New Relic — Status"
+	@echo "==> EKS on EC2 + New Relic — Status"
 	@echo ""
-	@echo "--- Pods (demo-newrelic) ---"
-	@kubectl get pods -n demo-newrelic -o wide
+	@echo "--- Pods (eks-ec2-newrelic) ---"
+	@kubectl get pods -n eks-ec2-newrelic -o wide
 	@echo ""
-	@echo "--- New Relic Agent Injection (look for newrelic-init) ---"
-	@kubectl get pods -n demo-newrelic -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .spec.initContainers[*]}{.name}{" "}{end}{"\n"}{end}' 2>/dev/null || true
+	@echo "--- New Relic Agent Injection ---"
+	@kubectl get pods -n eks-ec2-newrelic -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .spec.initContainers[*]}{.name}{" "}{end}{"\n"}{end}' 2>/dev/null || true
 	@echo ""
 	@echo "--- New Relic Infrastructure ---"
 	@kubectl get pods -n newrelic 2>/dev/null || echo "  (newrelic namespace not found — run make install-newrelic-full)"
 
 ec2-newrelic-down:
-	@echo "==> Deleting demo-newrelic namespace..."
-	@kubectl delete namespace demo-newrelic --timeout=120s 2>/dev/null || true
+	@echo "==> Deleting eks-ec2-newrelic namespace..."
+	@kubectl delete namespace eks-ec2-newrelic --timeout=120s 2>/dev/null || true
+	@echo "Done."
+
+# ============================================================
+# EKS on Fargate + New Relic  (namespace: eks-fargate-newrelic)
+# APM traces only — Infrastructure Agent (DaemonSet) not available on Fargate
+# ============================================================
+fargate-newrelic-deploy:
+	@$(SCRIPTS_DIR)/deploy-fargate-newrelic.sh
+
+fargate-newrelic-verify:
+	@echo "==> EKS on Fargate + New Relic — Status (APM only)"
+	@echo ""
+	@echo "--- Pods (eks-fargate-newrelic) ---"
+	@kubectl get pods -n eks-fargate-newrelic -o wide
+	@echo ""
+	@echo "--- New Relic Agent Injection ---"
+	@kubectl get pods -n eks-fargate-newrelic -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .spec.initContainers[*]}{.name}{" "}{end}{"\n"}{end}' 2>/dev/null || true
+	@echo ""
+	@echo "NOTE: Infrastructure Agent (DaemonSet) is not available on Fargate."
+	@echo "      APM traces are collected. Infra metrics and NR Logs are not."
+
+fargate-newrelic-down:
+	@echo "==> Deleting eks-fargate-newrelic namespace..."
+	@kubectl delete namespace eks-fargate-newrelic --timeout=120s 2>/dev/null || true
 	@echo "Done."
 
 # ============================================================
@@ -283,12 +316,8 @@ port-forward-fargate:
 port-forward-newrelic:
 	@$(SCRIPTS_DIR)/port-forward-newrelic.sh
 
-# ============================================================
-# Aliases (backward compat)
-# ============================================================
-deploy-ec2: ec2-appsignals-deploy
-deploy-fargate: fargate-appsignals-deploy
-deploy-newrelic: ec2-newrelic-deploy
+port-forward-fargate-newrelic:
+	@$(SCRIPTS_DIR)/port-forward-fargate-newrelic.sh
 
 # ============================================================
 # Destroy
@@ -309,12 +338,13 @@ down:
 	@helm uninstall nri-bundle -n newrelic 2>/dev/null || true
 
 	@echo ""
-	@echo "==> [3/5] Deleting Kubernetes resources..."
-	@kubectl delete namespace demo-ec2      --timeout=60s 2>/dev/null || true
-	@kubectl delete namespace demo-fargate  --timeout=60s 2>/dev/null || true
-	@kubectl delete namespace demo-newrelic --timeout=60s 2>/dev/null || true
-	@kubectl delete namespace newrelic      --timeout=60s 2>/dev/null || true
-	@kubectl delete namespace aws-observability --timeout=60s 2>/dev/null || true
+	@echo "==> [3/5] Deleting Kubernetes namespaces..."
+	@kubectl delete namespace eks-ec2-appsignals    --timeout=60s 2>/dev/null || true
+	@kubectl delete namespace eks-fargate-appsignals --timeout=60s 2>/dev/null || true
+	@kubectl delete namespace eks-ec2-newrelic       --timeout=60s 2>/dev/null || true
+	@kubectl delete namespace eks-fargate-newrelic   --timeout=60s 2>/dev/null || true
+	@kubectl delete namespace newrelic               --timeout=60s 2>/dev/null || true
+	@kubectl delete namespace aws-observability      --timeout=60s 2>/dev/null || true
 
 	@echo ""
 	@echo "==> [4/5] Running Terraform destroy..."

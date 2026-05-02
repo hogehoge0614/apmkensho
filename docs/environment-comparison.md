@@ -1,74 +1,122 @@
 # 環境比較ガイド
 
-本 PoC では 4 つの環境構成を比較します。
+## 環境マトリクス
 
-## 環境一覧
+| | CloudWatch App Signals | New Relic APM |
+|---|---|---|
+| **EKS on EC2** | `eks-ec2-appsignals` | `eks-ec2-newrelic` |
+| **EKS on Fargate** | `eks-fargate-appsignals` | `eks-fargate-newrelic` ⚠️ |
 
-| 環境 | ノードタイプ | オブザーバビリティスタック | Namespace |
-|------|------------|--------------------------|-----------|
-| EC2 + App Signals | EC2 (managed nodegroup) | CloudWatch Application Signals | `demo-ec2` |
-| Fargate + App Signals | AWS Fargate | CloudWatch Application Signals | `demo-fargate` |
-| EC2 + New Relic | EC2 (managed nodegroup) | New Relic APM Full Stack | `demo-newrelic` |
+> ⚠️ `eks-fargate-newrelic`: APM トレースのみ。Infrastructure Agent (DaemonSet) は Fargate 非対応のためインフラメトリクス・ログ転送は収集されない。詳細は後述。
 
-> Fargate + New Relic: NR Infrastructure Agent (DaemonSet) が Fargate 非対応のため、本 PoC では扱いません。
+---
 
-## アーキテクチャ比較
+## 各環境のアーキテクチャ
 
-### EC2 + App Signals
+### [1] EKS on EC2 + App Signals（`eks-ec2-appsignals`）
 
 ```
 Pod (FastAPI)
-  ← OTel Python SDK (init container by OTel Operator)
-  → OTLP (4316) → CloudWatch Agent DaemonSet
+  ← OTel Python SDK（OTel Operator が init container として自動注入）
+  → OTLP :4316 → CloudWatch Agent DaemonSet
   → X-Ray / App Signals / CloudWatch Metrics
 ```
 
-- **Auto-instrumentation**: OTel Operator が init container を注入（コード変更なし）
-- **エージェント**: DaemonSet（各 EC2 ノードに 1 つ）
+- **Auto-instrumentation**: `instrumentation.opentelemetry.io/inject-python: "true"` アノテーションで注入（コード変更なし）
+- **エージェント**: CloudWatch Agent DaemonSet（各 EC2 ノードに 1 つ）
 - **ログ**: Fluent Bit DaemonSet → CloudWatch Logs
-- **StatsD**: CloudWatch Agent が UDP 8125 で受信
+- **StatsD**: CloudWatch Agent が UDP 8125 で受信 → CloudWatch Metrics
 
-### Fargate + App Signals
+### [2] EKS on Fargate + App Signals（`eks-fargate-appsignals`）
 
 ```
 Pod (FastAPI)
-  ← OTel Python SDK (init container by OTel Operator)
-  → OTLP (4316) → CloudWatch Agent Service (Deployment)
+  ← OTel Python SDK（OTel Operator が init container として自動注入）
+  → OTLP :4316 → CloudWatch Agent Service（Deployment として稼働）
   → X-Ray / App Signals
 ```
 
-- **Auto-instrumentation**: 同上（OTel Operator がアノテーションで注入）
-- **エージェント**: DaemonSet 不可 → Fargate 用の Agent Deployment を別途用意
-- **ログ**: Fargate Fluent Bit sidecar (`aws-observability` ConfigMap) → CloudWatch Logs
-- **StatsD**: 未対応（DaemonSet なし）
+- **Auto-instrumentation**: EC2 環境と同じ（OTel Operator が注入）
+- **エージェント**: DaemonSet 不可 → Fargate 用の CloudWatch Agent Deployment を別途配置
+- **ログ**: Fargate 組み込み Fluent Bit（`aws-observability` ConfigMap）→ CloudWatch Logs
+- **StatsD**: DaemonSet がないため未対応
 
-### EC2 + New Relic
+### [3] EKS on EC2 + New Relic（`eks-ec2-newrelic`）
 
 ```
 Pod (FastAPI)
-  ← NR Python Agent (init container by k8s-agents-operator)
-  → NR Agent → New Relic APM (one.newrelic.com)
+  ← NR Python Agent（k8s-agents-operator が init container として自動注入）
+  → NR Agent → New Relic APM（one.newrelic.com）
 ```
 
-- **Auto-instrumentation**: k8s-agents-operator が `instrumentation.newrelic.com/inject-python` アノテーションで注入
-- **エージェント**: nri-bundle (Helm) — Infrastructure Agent, Prometheus, KSM など
-- **ログ**: NR Fluent Bit → New Relic Logs
-- **分散トレース**: New Relic Distributed Tracing (W3C TraceContext)
+- **Auto-instrumentation**: `instrumentation.newrelic.com/inject-python: "newrelic"` アノテーションで注入
+- **エージェント**: nri-bundle（Helm）— Infrastructure Agent DaemonSet + Prometheus + KSM
+- **ログ**: NR Fluent Bit DaemonSet → New Relic Logs
+- **分散トレース**: New Relic Distributed Tracing（W3C TraceContext）
+
+### [4] EKS on Fargate + New Relic（`eks-fargate-newrelic`）⚠️
+
+```
+Pod (FastAPI)
+  ← NR Python Agent（k8s-agents-operator が init container として自動注入）
+  → NR Agent → New Relic APM（APM トレースのみ）
+
+  ✗ Infrastructure Agent (DaemonSet) — Fargate 非対応
+  ✗ Fluent Bit DaemonSet — Fargate 非対応
+```
+
+#### Fargate + New Relic が制限される理由
+
+**DaemonSet は Fargate で動かない。** Fargate は「ノードレス」アーキテクチャで AWS がノードを完全に管理するため、ユーザーは仮想ノードに直接 Pod をスケジュールできない。New Relic の主要コンポーネントは DaemonSet に依存している。
+
+| コンポーネント | デプロイ方式 | Fargate |
+|---|---|---|
+| **Infrastructure Agent** | DaemonSet | ❌ 非対応 |
+| **Fluent Bit（ログ転送）** | DaemonSet | ❌ 非対応 |
+| kube-state-metrics | Deployment | ✅ 対応 |
+| k8s-agents-operator | Deployment | ✅ 対応 |
+| **NR Python APM Agent** | init container | ✅ 対応（APM トレースは取得可能） |
+
+CloudWatch App Signals は Fargate 向けに **Agent を DaemonSet ではなく Deployment として代替配置する構成**を公式サポートしているのに対し、New Relic は現時点でこの代替構成を公式提供していない。
+
+---
 
 ## 機能比較表
 
-| 機能 | EC2 + AppSignals | Fargate + AppSignals | EC2 + NewRelic |
-|------|:---:|:---:|:---:|
-| APM (自動計装) | ✅ OTel | ✅ OTel | ✅ NR Agent |
-| 分散トレース | ✅ X-Ray | ✅ X-Ray | ✅ NR Tracing |
-| サービスマップ | ✅ App Signals | ✅ App Signals | ✅ NR Service Map |
-| SLO | ✅ App Signals SLO | ✅ | ❌ (NR SLM は別途) |
-| ブラウザ監視 | ✅ CloudWatch RUM | ✅ CloudWatch RUM | ✅ NR Browser |
-| インフラメトリクス | ✅ Container Insights | ✅ Container Insights | ✅ NR Infrastructure |
-| カスタムメトリクス | ✅ StatsD → CW | ❌ (StatsD 非対応) | ✅ NR Flex / Dimensional |
-| ログ | ✅ Fluent Bit → CWL | ✅ Fargate Fluent Bit | ✅ NR Logs |
-| アラーム | ✅ CloudWatch Alarms | ✅ | ✅ NR Alerts |
-| DB クエリ可視化 | ✅ psycopg2 instrumentation | ✅ | ✅ NR Database |
+| 機能 | EC2 + AppSignals | Fargate + AppSignals | EC2 + NewRelic | Fargate + NewRelic |
+|------|:---:|:---:|:---:|:---:|
+| APM（自動計装） | ✅ OTel | ✅ OTel | ✅ NR Agent | ✅ NR Agent |
+| 分散トレース | ✅ X-Ray | ✅ X-Ray | ✅ NR Tracing | ✅ NR Tracing |
+| サービスマップ | ✅ App Signals | ✅ App Signals | ✅ NR Service Map | ✅ NR Service Map |
+| SLO | ✅ App Signals SLO | ✅ | ❌（NR SLM は別途） | ❌ |
+| ブラウザ監視 | ✅ CloudWatch RUM | ✅ CloudWatch RUM | ✅ NR Browser | ✅ NR Browser |
+| インフラメトリクス | ✅ Container Insights | ✅ Container Insights | ✅ NR Infrastructure | ❌ DaemonSet 非対応 |
+| カスタムメトリクス | ✅ StatsD → CW | ❌ DaemonSet なし | ✅ NR Flex | ❌ DaemonSet なし |
+| ログ | ✅ Fluent Bit DaemonSet | ✅ Fargate Fluent Bit | ✅ NR Logs DaemonSet | ❌ DaemonSet 非対応 |
+| アラーム | ✅ CloudWatch Alarms | ✅ | ✅ NR Alerts | ✅ NR Alerts |
+| DB クエリ可視化 | ✅ psycopg2 計装 | ✅ | ✅ NR Database | ✅ NR Database |
+
+---
+
+## APM ツール比較（EC2 環境での機能差）
+
+| 機能 | CloudWatch App Signals | New Relic APM |
+|------|-------------------------------|----------------------------|
+| **計装方式** | OTel Operator（CW addon）自動注入 | k8s-agents-operator 自動注入 |
+| **エージェント** | ADOT（OTel SDK + AWS Distro） | New Relic Python APM agent |
+| **APM トレース** | X-Ray + Application Signals | NR Distributed Tracing |
+| **サービスマップ** | Application Signals Service Map | APM Service Map |
+| **SLO 管理** | Application Signals SLOs | Service Levels |
+| **K8s メトリクス** | Container Insights | NR Kubernetes |
+| **ログ** | CloudWatch Logs（Fluent Bit） | NR Logs（Fluent Bit） |
+| **Logs in Context** | trace_id で手動検索（2ステップ） | トレース詳細から1クリック |
+| **エラーグルーピング** | 個別トレースを目視 | Errors Inbox（自動グルーピング） |
+| **遅いTX自動検出** | 手動フィルタ | Transaction Traces（自動キャプチャ） |
+| **Apdex** | なし | あり（0–1スコア） |
+| **アラート柔軟性** | メトリクスアラーム（ディメンション固定） | NRQL で任意条件を直接アラート化 |
+| **コスト構造** | AWS 従量課金 | NR サブスクリプション |
+
+---
 
 ## コスト考慮点
 
@@ -81,82 +129,5 @@ Pod (FastAPI)
 
 ### New Relic
 - Full Stack Observability ライセンス（ユーザー数 + データ量）
-- 無料枠: 100GB/月のデータ取り込み、1 ユーザー
+- 無料枠: 100GB/月のデータ取り込み、1 フルユーザー
 - フルユーザー: $99/月〜
-
-## セットアップ手順
-
-### 共通（初回のみ）
-
-```bash
-make check-prereq              # ツール・AWS 認証情報の確認
-make up                        # EKS / RDS / VPC / ECR / Fargate Profile を作成（約20分）
-make create-secrets            # RDS 接続情報を K8s Secret として作成
-make build-push                # アプリイメージをビルドして ECR にプッシュ（約10分）
-```
-
-### EC2 + App Signals
-
-```bash
-make install-cloudwatch-full            # CloudWatch スタックのセットアップ
-make ec2-appsignals-deploy              # demo-ec2 namespace にデプロイ
-make ec2-appsignals-verify              # Pod 起動・OTel init container の確認
-
-# LoadBalancer URL を .env に追記
-EC2_LB=$(kubectl get svc netwatch-ui -n demo-ec2 \
-  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-echo "EC2_BASE=http://${EC2_LB}" >> .env && source .env
-
-make load                               # トラフィック生成
-
-# オプション: RUM・カスタムメトリクスの有効化
-make ec2-appsignals-enable-rum          # CloudWatch RUM（要: .env に CW_RUM_* 変数）
-make ec2-appsignals-enable-custom-metrics  # StatsD カスタムメトリクス
-```
-
-### Fargate + App Signals
-
-> **前提:** 共通手順（`make up` / `make create-secrets` / `make build-push`）が完了していること。
-
-```bash
-make install-cloudwatch-full            # CloudWatch スタック（EC2 と共用可）
-make fargate-appsignals-deploy          # demo-fargate namespace にデプロイ
-make fargate-appsignals-verify          # Pod 起動の確認
-
-# LoadBalancer URL を .env に追記
-FARGATE_LB=$(kubectl get svc netwatch-ui -n demo-fargate \
-  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-echo "FARGATE_BASE=http://${FARGATE_LB}" >> .env && source .env
-
-make load                               # トラフィック生成（EC2・Fargate 両方に送信）
-```
-
-### EC2 + New Relic
-
-> **前提:** 共通手順（`make up` / `make create-secrets` / `make build-push`）が完了していること。  
-> `.env` に `NEW_RELIC_LICENSE_KEY` / `NEW_RELIC_ACCOUNT_ID` を設定してから実行してください。
-
-```bash
-make install-newrelic-full              # nri-bundle Helm + k8s-agents-operator のインストール
-make ec2-newrelic-deploy               # demo-newrelic namespace にデプロイ
-make ec2-newrelic-verify               # NR Python Agent の注入確認
-
-# LoadBalancer URL を .env に追記
-NEWRELIC_LB=$(kubectl get svc netwatch-ui -n demo-newrelic \
-  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-echo "NEWRELIC_BASE=http://${NEWRELIC_LB}" >> .env && source .env
-
-make load                               # トラフィック生成（到達可能な全環境に送信）
-```
-
-## 削除手順
-
-```bash
-# 個別環境の削除
-make ec2-appsignals-down     # demo-ec2 namespace を削除
-make fargate-appsignals-down # demo-fargate namespace を削除
-make ec2-newrelic-down       # demo-newrelic namespace を削除
-
-# 全リソース削除 (EKS + Terraform)
-make down
-```

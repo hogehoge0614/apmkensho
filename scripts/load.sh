@@ -13,9 +13,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-EC2_BASE="${EC2_BASE:-http://localhost:8080}"
-FARGATE_BASE="${FARGATE_BASE:-http://localhost:8081}"
-NEWRELIC_BASE="${NEWRELIC_BASE:-}"
+EC2_AS_BASE="${EC2_AS_BASE:-http://localhost:8080}"
+FARGATE_AS_BASE="${FARGATE_AS_BASE:-http://localhost:8081}"
+EC2_NR_BASE="${EC2_NR_BASE:-}"
+FARGATE_NR_BASE="${FARGATE_NR_BASE:-}"
 ROUNDS="${ROUNDS:-3}"
 DELAY="${DELAY:-1}"
 SCENARIO="${1:-all}"
@@ -153,18 +154,22 @@ run_on_available_targets() {
   shift
   local scenarios=("$@")
 
-  if check_target "${EC2_BASE}"; then
-    run_scenarios "${EC2_BASE}" "EC2 / ${label}" "${scenarios[@]}"
+  if check_target "${EC2_AS_BASE}"; then
+    run_scenarios "${EC2_AS_BASE}" "EKS on EC2 (AppSignals) / ${label}" "${scenarios[@]}"
   else
-    echo "  [SKIP] EC2 not reachable at ${EC2_BASE}"
+    echo "  [SKIP] EC2 not reachable at ${EC2_AS_BASE}"
   fi
 
-  if check_target "${FARGATE_BASE}"; then
-    run_scenarios "${FARGATE_BASE}" "Fargate / ${label}" "${scenarios[@]}"
+  if check_target "${FARGATE_AS_BASE}"; then
+    run_scenarios "${FARGATE_AS_BASE}" "EKS on Fargate (AppSignals) / ${label}" "${scenarios[@]}"
   fi
 
-  if [ -n "${NEWRELIC_BASE}" ] && check_target "${NEWRELIC_BASE}"; then
-    run_scenarios "${NEWRELIC_BASE}" "NewRelic / ${label}" "${scenarios[@]}"
+  if [ -n "${EC2_NR_BASE}" ] && check_target "${EC2_NR_BASE}"; then
+    run_scenarios "${EC2_NR_BASE}" "EKS on EC2 (NewRelic) / ${label}" "${scenarios[@]}"
+  fi
+
+  if [ -n "${FARGATE_NR_BASE}" ] && check_target "${FARGATE_NR_BASE}"; then
+    run_scenarios "${FARGATE_NR_BASE}" "EKS on Fargate (NewRelic) / ${label}" "${scenarios[@]}"
   fi
 }
 
@@ -184,10 +189,13 @@ print_help() {
   echo "  alert-storm-alerts   Alert Storm後のアラート一覧"
   echo "  mixed-user-flow      ユーザー回遊（ / → /devices → /devices/id → /alerts → /chaos）"
   echo ""
-  echo "Environment variables:"
-  echo "  EC2_BASE=http://...   対象URL (default: http://localhost:8080)"
-  echo "  ROUNDS=3              繰り返し回数"
-  echo "  DELAY=1               リクエスト間隔(秒)"
+  echo "Environment variables (.env で設定):"
+  echo "  EC2_AS_BASE=http://...      EKS on EC2 + App Signals の URL"
+  echo "  FARGATE_AS_BASE=http://...  EKS on Fargate + App Signals の URL"
+  echo "  EC2_NR_BASE=http://...      EKS on EC2 + New Relic の URL"
+  echo "  FARGATE_NR_BASE=http://...  EKS on Fargate + New Relic の URL"
+  echo "  ROUNDS=3                    繰り返し回数"
+  echo "  DELAY=1                     リクエスト間隔(秒)"
 }
 
 # ── メイン ────────────────────────────────────────────────────────────────
@@ -283,22 +291,28 @@ case "${SCENARIO}" in
       echo ""
       echo "====== Round ${round}/${ROUNDS} ======"
 
-      if check_target "${EC2_BASE}"; then
-        run_scenarios "${EC2_BASE}" "EC2" "${ALL_SCENARIOS[@]}"
+      if check_target "${EC2_AS_BASE}"; then
+        run_scenarios "${EC2_AS_BASE}" "EKS on EC2 (AppSignals)" "${ALL_SCENARIOS[@]}"
       else
-        echo "  [SKIP] EC2 frontend not reachable at ${EC2_BASE}. Set EC2_BASE in .env"
+        echo "  [SKIP] EC2_AS_BASE not reachable at ${EC2_AS_BASE}. Set EC2_AS_BASE in .env"
       fi
 
-      if check_target "${FARGATE_BASE}"; then
-        run_scenarios "${FARGATE_BASE}" "Fargate" "${ALL_SCENARIOS[@]}"
+      if check_target "${FARGATE_AS_BASE}"; then
+        run_scenarios "${FARGATE_AS_BASE}" "EKS on Fargate (AppSignals)" "${ALL_SCENARIOS[@]}"
       else
-        echo "  [SKIP] Fargate not reachable at ${FARGATE_BASE}"
+        echo "  [SKIP] FARGATE_AS_BASE not reachable at ${FARGATE_AS_BASE}"
       fi
 
-      if [ -n "${NEWRELIC_BASE}" ] && check_target "${NEWRELIC_BASE}"; then
-        run_scenarios "${NEWRELIC_BASE}" "NewRelic" "${ALL_SCENARIOS[@]}"
-      elif [ -z "${NEWRELIC_BASE}" ]; then
-        echo "  [SKIP] NEWRELIC_BASE not set"
+      if [ -n "${EC2_NR_BASE}" ] && check_target "${EC2_NR_BASE}"; then
+        run_scenarios "${EC2_NR_BASE}" "EKS on EC2 (NewRelic)" "${ALL_SCENARIOS[@]}"
+      elif [ -z "${EC2_NR_BASE}" ]; then
+        echo "  [SKIP] EC2_NR_BASE not set"
+      fi
+
+      if [ -n "${FARGATE_NR_BASE}" ] && check_target "${FARGATE_NR_BASE}"; then
+        run_scenarios "${FARGATE_NR_BASE}" "EKS on Fargate (NewRelic)" "${ALL_SCENARIOS[@]}"
+      elif [ -z "${FARGATE_NR_BASE}" ]; then
+        echo "  [SKIP] FARGATE_NR_BASE not set"
       fi
 
       if [ "${round}" -lt "${ROUNDS}" ]; then
