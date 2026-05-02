@@ -1,5 +1,8 @@
 # CloudWatch RUM ハンズオン
 
+> **対象環境:** EC2 + App Signals (`demo-ec2`) のみ。  
+> Fargate 環境への RUM 展開は本 PoC の範囲外です。New Relic でブラウザ監視を行う場合は NR Browser Agent を使用します（[environment-comparison.md](environment-comparison.md) 参照）。
+
 CloudWatch RUM（Real User Monitoring）は、実際のブラウザセッションのパフォーマンス・エラー・HTTP リクエストを収集するサービスです。このラボでは RUM を有効化し、ブラウザ側のテレメトリが CloudWatch に届くことを確認します。
 
 ## アーキテクチャ

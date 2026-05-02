@@ -1,7 +1,8 @@
 # NetWatch 運用 Runbook
 
 > 対象システム: NetWatch（ネットワーク機器監視 PoC）  
-> EKS クラスター: `obs-poc` / ネームスペース: `demo-ec2` / リージョン: `ap-northeast-1`  
+> 対象環境: **EC2 + App Signals** / EKS クラスター: `obs-poc` / ネームスペース: `demo-ec2` / リージョン: `ap-northeast-1`  
+> Fargate 環境は `demo-fargate`、New Relic 環境は `demo-newrelic` に読み替えてください  
 > 最終更新: 2026-04-30
 
 ---

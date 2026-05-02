@@ -9,6 +9,21 @@ cat <<'EOF'
  CloudWatch + Application Signals  vs  New Relic Full Stack
 ========================================================================
 
+ サービス構成:
+   netwatch-ui      … Frontend + BFF (HTML / API proxy / Chaos control)
+   device-api       … デバイス管理 API (PostgreSQL RDS 連携)
+   alert-api        … アラート管理 API (PostgreSQL RDS 連携)
+   metrics-collector … バックグラウンド メトリクス収集 (passive)
+
+ トレースパス:
+   ブラウザ → netwatch-ui → device-api → RDS  (デバイス詳細: 3ホップ)
+   ブラウザ → netwatch-ui → alert-api  → RDS  (アラート一覧)
+
+ Chaos モード (/chaos ページまたは make load-* で制御):
+   Slow Query   … device-api のDBクエリに遅延を注入 (デフォルト 3000ms)
+   Error Inject … device-api のレスポンスをランダムに 500 エラーにする
+   Alert Storm  … alert-api に大量のアラートを生成する
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  SECTION 1: CloudWatch + Application Signals (AWS Console)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -16,18 +31,18 @@ cat <<'EOF'
 [1-A] Application Signals - Service Map
   URL: CloudWatch > Application Signals > Services
   観点:
-  - frontend-ui → backend-for-frontend → order-api/inventory-api/payment-api の依存グラフが見えるか
-  - external-api-simulator が外部依存として見えるか
+  - netwatch-ui → device-api → RDS の依存グラフが見えるか
+  - netwatch-ui → alert-api → RDS の依存グラフが見えるか
   - ノードのレイテンシ・エラー率がリアルタイムで更新されるか
-  確認シナリオ: checkout/slow-payment を実行してpayment-apiが赤くなるか
+  確認シナリオ: Slow Query chaos を有効化し make load-slow を実行 → device-api ノードが赤くなるか
 
 [1-B] Application Signals - Traces
   URL: CloudWatch > Application Signals > Services > [service] > Traces
   観点:
-  - 単一リクエストのエンドツーエンドトレースが見えるか
+  - 単一リクエストのエンドツーエンドトレースが見えるか (netwatch-ui → device-api → RDS)
   - 各スパンの所要時間が棒グラフで確認できるか
-  - checkout/slow-inventory でinventory-apiのスパンが長くなるか
-  - checkout/payment-error でpayment-apiにエラーが表示されるか
+  - Slow Query 有効時に device-api の DB スパンが長くなるか
+  - Error Inject 有効時に device-api のスパンにエラーが表示されるか
   - trace_id でログとの相関ができるか
 
 [1-C] CloudWatch Container Insights
@@ -53,17 +68,19 @@ cat <<'EOF'
   URL: CloudWatch > RUM > App Monitors > obs-poc-rum
   観点:
   - ページビュー数が記録されているか
-  - JavaScriptエラーが捕捉されるか (Trigger JS Error ボタンを押す)
+  - JavaScriptエラーが捕捉されるか (/rum-test ページの "Trigger JS Error" ボタンを押す)
   - Core Web Vitals (LCP/FID/CLS) が記録されるか
-  - APIコールのタイミングが記録されるか
+  - APIコールのタイミングが記録されるか (/devices, /alerts など)
   - セッション単位でのユーザー行動が追跡できるか
+  - User sessions → "View in X-Ray" でブラウザセッションからトレースに移動できるか
 
-[1-F] CloudWatch Synthetics
-  URL: CloudWatch > Synthetics > Canaries
+[1-F] CloudWatch Custom Metrics (StatsD)
+  URL: CloudWatch > Metrics > All metrics > Custom namespaces > NetwatchPoC/Custom
   観点:
-  - obs-poc-health-check の実行履歴が見えるか
-  - 成功/失敗率が記録されているか
-  - スクリーンショット/HAR が保存されているか
+  - netwatch.ui.page.views / netwatch.ui.page.dashboard_ms などが記録されているか
+  - netwatch.device.list_ms / netwatch.device.detail_ms が記録されているか
+  - netwatch.alert.list_ms が記録されているか
+  - Slow Query 有効時に netwatch.device.list_ms の Average が上昇するか
 
 [1-G] CloudWatch Dashboard
   URL: CloudWatch > Dashboards > obs-poc-observability-poc
@@ -79,26 +96,24 @@ cat <<'EOF'
 [2-A] New Relic APM - Service List
   URL: https://one.newrelic.com/apm
   観点:
-  - 全6サービス (frontend-ui, bff, order-api, inventory-api, payment-api, external-api-simulator) が表示されるか
+  - 4サービス (netwatch-ui, device-api, alert-api, metrics-collector) が表示されるか
   - Apdex, エラー率, スループットがリアルタイム更新されるか
-  - EC2版とFargate版で別アプリとして表示されるか
 
 [2-B] New Relic Distributed Tracing
   URL: https://one.newrelic.com/distributed-tracing
   観点:
-  - frontend-ui → bff → order-api → payment-api のトレースが1画面で見えるか
-  - checkout/slow-payment でpayment-apiスパンが赤く表示されるか
-  - checkout/payment-error でエラーの原因サービスが一目で分かるか
-  - external-api-simulator が外部サービスとして表示されるか
+  - netwatch-ui → device-api → PostgreSQL のトレースが1画面で見えるか
+  - Slow Query 有効時に device-api の DB スパンが赤く表示されるか
+  - Error Inject 有効時にエラーの原因サービスが一目で分かるか
+  - RDS が外部データストアとして表示されるか
   - 検索: "trace.id = <trace_id>" で特定トレースを検索できるか
 
 [2-C] New Relic Kubernetes
   URL: https://one.newrelic.com/kubernetes
   観点:
-  - demo-ec2, demo-fargate namespace のPod一覧が見えるか
+  - demo-newrelic namespace のPod一覧が見えるか
   - CPU/Memory 使用率がリアルタイムで更新されるか
   - Pod → APMサービスへのリンクが機能するか
-  - Fargate側でのKubernetes情報の完全性 (EC2に比べて制約あり)
 
 [2-D] New Relic Logs - Logs in Context
   URL: New Relic APM > [service] > Logs
@@ -108,23 +123,16 @@ cat <<'EOF'
   - 構造化JSONログが正しくパースされているか
   - エラーログに "error_message" フィールドが含まれるか
   NR Logs検索クエリ例:
-    service_name = 'payment-api' AND status_code >= 500
+    service_name = 'device-api' AND status_code >= 500
 
 [2-E] New Relic Browser
   URL: https://one.newrelic.com/browser
   観点:
   - ページビュー数が記録されているか
-  - JavaScriptエラーが捕捉されるか (Trigger JS Error ボタンを押す)
+  - JavaScriptエラーが捕捉されるか (/rum-test ページの "Trigger JS Error" を押す)
   - Core Web Vitals (LCP/FID/INP/CLS) が記録されるか
   - SessionTraceで操作の順序が再現できるか
   - AjaxコールとAPMトレースが紐付くか
-
-[2-F] New Relic Synthetic
-  URL: https://one.newrelic.com/synthetics
-  観点:
-  - obs-poc-health-check の実行履歴が見えるか
-  - 応答時間トレンドが見えるか
-  - 障害時にアラートが発火するか
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  SECTION 2-APM: New Relic APM 特化機能（CW との有意差検証）
@@ -133,9 +141,10 @@ cat <<'EOF'
 [シナリオA] エラー分析の深度 — Errors Inbox vs X-Ray
 
   事前操作:
-    for i in $(seq 1 25); do curl -s http://localhost:8080/api/checkout/payment-error > /dev/null; done
+    # /chaos ページで Error Inject を有効化 (rate=30%) してから
+    make load-error
 
-  [NR] APM > [payment-api] > Errors Inbox
+  [NR] APM > [device-api] > Errors Inbox
   確認:
   - エラーが fingerprint で自動グルーピングされているか（同種エラーをまとめて表示）
   - Python の full stack trace が取得できているか（ファイル名・行番号まで）
@@ -148,21 +157,22 @@ cat <<'EOF'
   - エラーのグルーピング・集計機能はあるか
 
   比較ポイント:
-  □ 同じエラーが 25 回発生した時、NR は何グループに集約されるか
-  □ CW で「このエラーは昨日から何回発生しているか」を把握するのに何ステップかかるか
+  □ 同種エラーが多発した時、NR は何グループに集約されるか
+  □ CW で「このエラーは過去1時間何回発生したか」を把握するのに何ステップかかるか
 
 ---
 
 [シナリオB] 遅いトランザクションの自動検出 — Transaction Traces vs X-Ray 手動フィルタ
 
   事前操作:
-    for i in $(seq 1 30); do curl -s http://localhost:8080/api/checkout/slow-payment > /dev/null; done
+    # /chaos ページで Slow Query を有効化 (3000ms) してから
+    make load-slow
 
-  [NR] APM > [backend-for-frontend] > Transaction Traces
+  [NR] APM > [netwatch-ui] > Transaction Traces
   確認:
   - 遅い実行が自動的にリストアップされているか
-  - Trace 詳細の Breakdown Table で FastAPI ルート・httpx 呼び出しごとの時間が見えるか
-  - payment-api への httpx 呼び出しが何% の時間を占めているかが一目でわかるか
+  - Trace 詳細の Breakdown Table でルート・httpx 呼び出しごとの時間が見えるか
+  - device-api への httpx 呼び出しが何% の時間を占めているかが一目でわかるか
 
   [CW] X-Ray > Traces > Sort by duration (降順)
   確認:
@@ -170,19 +180,19 @@ cat <<'EOF'
   - スパン間の「空白時間（待ち時間）」の原因が読み取れるか
 
   比較ポイント:
-  □ "payment-api の呼び出しが遅い" という結論に到達するまでのクリック数
+  □ "device-api の DB クエリが遅い" という結論に到達するまでのクリック数
   □ NR Breakdown Table の粒度 vs X-Ray のスパンリストの粒度
 
 ---
 
 [シナリオC] Logs in Context の操作性
 
-  事前操作: checkout/payment-error または slow-payment を数回実行
+  事前操作: Slow Query または Error Inject を有効化して make load を数回実行
 
   [NR] トレース → ログへの1クリック移動
   手順:
-  1. APM > [payment-api] > Distributed Tracing で任意のトレースを選択
-  2. payment-api スパンを選択 → 右パネルの "Logs" タブをクリック
+  1. APM > [device-api] > Distributed Tracing で任意のトレースを選択
+  2. device-api スパンを選択 → 右パネルの "Logs" タブをクリック
   3. そのスパン時刻範囲内のログが自動表示されるか確認
   4. ログエントリを選択 → "View span in APM" で逆引きナビゲーションができるか
 
@@ -208,13 +218,14 @@ cat <<'EOF'
   確認:
   - 各ノードに Apdex スコアが表示されているか（0–1 のスコア）
   - スループット（rpm）が各ノードに表示されるか
-  - External Services として external-api-simulator が別枠で詳細表示されるか
-  - APM > [order-api] > External services でレスポンスタイムの breakdown が見えるか
+  - RDS が DataStore として別枠で詳細表示されるか
+  - APM > [device-api] > Databases でクエリ別レスポンスタイムの breakdown が見えるか
 
   [CW] Application Signals > Service Map
   確認:
   - ノードに表示される指標は何か（レイテンシ・エラー率のみか）
   - Apdex に相当するユーザー体感スコアはあるか
+  - RDS は外部依存として表示されるか
 
   比較ポイント:
   □ サービスマップ上で "最も問題のあるサービス" を直感的に特定できるか
@@ -228,15 +239,15 @@ cat <<'EOF'
   操作:
   1. "Write your own query" を選択
   2. 以下の条件をそれぞれ作成してみる:
-     - payment-api の p99 レイテンシ > 2 秒:
+     - device-api の p99 レイテンシ > 2 秒:
          SELECT percentile(duration, 99) FROM Transaction
-         WHERE appName = 'payment-api'
+         WHERE appName = 'device-api'
      - エラー率 5% 超え:
          SELECT percentage(count(*), WHERE error IS true) FROM Transaction
-         WHERE appName = 'payment-api'
-     - 特定エンドポイントのみ (/pay/error):
+         WHERE appName = 'device-api'
+     - 特定エンドポイントのみ (/devices/{id}):
          SELECT count(*) FROM Transaction
-         WHERE request.uri LIKE '/pay/error' AND error IS true
+         WHERE request.uri LIKE '/devices/%' AND error IS true
   確認: 条件の自由度・プレビューで閾値を視覚確認できるか
 
   [CW] CloudWatch Alarms > Create alarm
@@ -244,7 +255,7 @@ cat <<'EOF'
   - 同等の条件を CloudWatch Alarm で設定してみる
   - Application Signals メトリクスのディメンション指定の複雑さを確認
   比較ポイント:
-  □ "payment-api の /pay/error エンドポイントのみのエラー率" をアラート化できるか
+  □ "device-api の /devices/{id} エンドポイントのみのエラー率" をアラート化できるか
   □ アラート条件の定義にかかる時間とステップ数
 
 ---
@@ -254,14 +265,14 @@ cat <<'EOF'
   事前操作:
     # 正常トラフィックを 5 分流す
     make load
-    # 異常を注入（slow-payment を集中させる）
-    for i in $(seq 1 50); do curl -s http://localhost:8080/api/checkout/slow-payment > /dev/null; sleep 1; done
+    # /chaos ページで Slow Query を有効化してから
+    make load-slow
 
   [NR] Applied Intelligence > Lookout（または APM > Lookout）
   確認:
-  - 事前設定なしで backend-for-frontend の異常が自動検出されるか
+  - 事前設定なしで netwatch-ui / device-api の異常が自動検出されるか
   - どのシグナル（レイテンシ・エラー率・スループット）の異常が検出されるか
-  - 関連エンティティ（payment-api）まで自動的に相関が示されるか
+  - 関連エンティティ（device-api, RDS）まで自動的に相関が示されるか
 
   [CW] CloudWatch > Anomaly Detection
   確認:
@@ -278,21 +289,24 @@ cat <<'EOF'
 
 ── APM 機能（NR が有意差を出しやすい領域） ──────────────────────────────
 
-□ エラー分析: 25 回エラー発生後、NR Errors Inbox でグルーピングされるか・stack trace が取れるか
-□ 遅いTX自動検出: slow-payment 実行後、NR Transaction Traces が自動キャプチャするか
+□ エラー分析: Error Inject 後、NR Errors Inbox でグルーピングされるか・stack trace が取れるか
+□ 遅いTX自動検出: Slow Query 後、NR Transaction Traces が自動キャプチャするか
 □ Logs in Context: トレース → ログへの到達クリック数（NR vs CW の手動 trace_id 検索）
-□ Apdex: slow-payment で Apdex スコアが下がるタイミングが視覚的に分かるか
-□ サービスマップ情報密度: ノードの情報量・external-api-simulator の可視性の差
-□ アラート柔軟性: "/pay/error エンドポイントのみのエラー率" を両ツールでアラート化できるか
+□ Apdex: Slow Query で Apdex スコアが下がるタイミングが視覚的に分かるか
+□ サービスマップ情報密度: ノードの情報量・RDS DataStore の可視性の差
+□ アラート柔軟性: "/devices/{id} エンドポイントのみのエラー率" を両ツールでアラート化できるか
 □ 自動異常検知: 設定ゼロで異常が検出されるか（NR Lookout vs CW Anomaly Detection）
 
 ── その他比較ポイント ──────────────────────────────────────────────────
 
 □ トレース見やすさ: 1画面でサービス間依存とスパン時間が比較できるか
-□ ボトルネック特定: slow-payment 実行後、どちらが速く原因を指し示すか
+□ ボトルネック特定: Slow Query 後、どちらが速く "device-api の DB クエリ" を指し示すか
 □ ログ相関: trace_id → ログ → スパンの往復ナビゲーションのしやすさ
+□ DB可視化: psycopg2 の SQL レベルまで両ツールが掘り下げられるか
 □ Kubernetes状態: Pod CPU/Memory とAPMトレースの連携しやすさ
-□ Fargate制約: EC2と比べてどの機能が使えないか/制約があるか
+□ Fargate制約: EC2と比べてどの機能が使えないか/制約があるか (StatsD, DaemonSet 等)
+□ ブラウザ監視: CloudWatch RUM vs New Relic Browser — セッション追跡・X-Ray連携の差
+□ カスタムメトリクス: StatsD (CW) vs NR Flex — 実装コストと可視性の差
 □ ダッシュボード: カスタマイズのしやすさ・デフォルトで見える情報量
 □ 導入コスト: アプリ改修量、設定の複雑さ、学習コスト
 
@@ -302,6 +316,10 @@ echo "  CloudWatch Application Signals:"
 echo "    https://${AWS_REGION}.console.aws.amazon.com/cloudwatch/home?region=${AWS_REGION}#application-signals:services"
 echo "  CloudWatch Container Insights:"
 echo "    https://${AWS_REGION}.console.aws.amazon.com/cloudwatch/home?region=${AWS_REGION}#container-insights:performance"
+echo "  CloudWatch RUM:"
+echo "    https://${AWS_REGION}.console.aws.amazon.com/cloudwatch/home?region=${AWS_REGION}#rum:app-monitors"
+echo "  CloudWatch Custom Metrics:"
+echo "    https://${AWS_REGION}.console.aws.amazon.com/cloudwatch/home?region=${AWS_REGION}#metricsV2:namespace=NetwatchPoC/Custom"
 echo "  New Relic APM:"
 echo "    https://one.newrelic.com/apm"
 echo "  New Relic Kubernetes:"

@@ -1,7 +1,7 @@
 # ============================================================
 # Observability PoC - Makefile
 # CloudWatch + Application Signals vs New Relic Full Stack
-# 4 environments: EC2+AppSignals, Fargate+AppSignals, EC2+NewRelic, Fargate+NewRelic
+# 3 environments: EC2+AppSignals, Fargate+AppSignals, EC2+NewRelic
 # ============================================================
 
 SHELL := /bin/bash

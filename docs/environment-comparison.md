@@ -86,41 +86,76 @@ Pod (FastAPI)
 
 ## セットアップ手順
 
-### EC2 + App Signals
+### 共通（初回のみ）
+
 ```bash
-make check-prereq
-make up
-make create-secrets
-make build-push
-make install-cloudwatch-full
-make ec2-appsignals-deploy
-make ec2-appsignals-enable-rum
-make ec2-appsignals-enable-custom-metrics
-make load
+make check-prereq              # ツール・AWS 認証情報の確認
+make up                        # EKS / RDS / VPC / ECR / Fargate Profile を作成（約20分）
+make create-secrets            # RDS 接続情報を K8s Secret として作成
+make build-push                # アプリイメージをビルドして ECR にプッシュ（約10分）
+```
+
+### EC2 + App Signals
+
+```bash
+make install-cloudwatch-full            # CloudWatch スタックのセットアップ
+make ec2-appsignals-deploy              # demo-ec2 namespace にデプロイ
+make ec2-appsignals-verify              # Pod 起動・OTel init container の確認
+
+# LoadBalancer URL を .env に追記
+EC2_LB=$(kubectl get svc netwatch-ui -n demo-ec2 \
+  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+echo "EC2_BASE=http://${EC2_LB}" >> .env && source .env
+
+make load                               # トラフィック生成
+
+# オプション: RUM・カスタムメトリクスの有効化
+make ec2-appsignals-enable-rum          # CloudWatch RUM（要: .env に CW_RUM_* 変数）
+make ec2-appsignals-enable-custom-metrics  # StatsD カスタムメトリクス
 ```
 
 ### Fargate + App Signals
+
+> **前提:** 共通手順（`make up` / `make create-secrets` / `make build-push`）が完了していること。
+
 ```bash
-make install-cloudwatch-full
-make fargate-appsignals-deploy
-make load
+make install-cloudwatch-full            # CloudWatch スタック（EC2 と共用可）
+make fargate-appsignals-deploy          # demo-fargate namespace にデプロイ
+make fargate-appsignals-verify          # Pod 起動の確認
+
+# LoadBalancer URL を .env に追記
+FARGATE_LB=$(kubectl get svc netwatch-ui -n demo-fargate \
+  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+echo "FARGATE_BASE=http://${FARGATE_LB}" >> .env && source .env
+
+make load                               # トラフィック生成（EC2・Fargate 両方に送信）
 ```
 
 ### EC2 + New Relic
+
+> **前提:** 共通手順（`make up` / `make create-secrets` / `make build-push`）が完了していること。  
+> `.env` に `NEW_RELIC_LICENSE_KEY` / `NEW_RELIC_ACCOUNT_ID` を設定してから実行してください。
+
 ```bash
-# .env に NEW_RELIC_LICENSE_KEY, NEW_RELIC_ACCOUNT_ID を設定
-make install-newrelic-full
-make ec2-newrelic-deploy
-make load
+make install-newrelic-full              # nri-bundle Helm + k8s-agents-operator のインストール
+make ec2-newrelic-deploy               # demo-newrelic namespace にデプロイ
+make ec2-newrelic-verify               # NR Python Agent の注入確認
+
+# LoadBalancer URL を .env に追記
+NEWRELIC_LB=$(kubectl get svc netwatch-ui -n demo-newrelic \
+  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+echo "NEWRELIC_BASE=http://${NEWRELIC_LB}" >> .env && source .env
+
+make load                               # トラフィック生成（到達可能な全環境に送信）
 ```
 
 ## 削除手順
 
 ```bash
 # 個別環境の削除
-make ec2-appsignals-down
-make fargate-appsignals-down
-make ec2-newrelic-down
+make ec2-appsignals-down     # demo-ec2 namespace を削除
+make fargate-appsignals-down # demo-fargate namespace を削除
+make ec2-newrelic-down       # demo-newrelic namespace を削除
 
 # 全リソース削除 (EKS + Terraform)
 make down

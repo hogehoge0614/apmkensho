@@ -153,21 +153,32 @@ OTel auto-instrumentation（コード変更なし）が httpx の全呼び出し
 
 ```
 EKS Cluster: obs-poc (ap-northeast-1)
-  └─ Managed Node Group: t3.small × 2
-  └─ Namespace: demo-ec2
-       └─ Deployment: netwatch-ui / device-api / alert-api / metrics-collector
-       └─ Service: netwatch-ui (LoadBalancer) / 他3つ (ClusterIP)
+  ├─ Managed Node Group: t3.small × 2
+  │    └─ Namespace: demo-ec2       (EC2 + App Signals)
+  │    │    └─ Deployment: netwatch-ui / device-api / alert-api / metrics-collector
+  │    │    └─ Service: netwatch-ui (LoadBalancer) / 他3つ (ClusterIP)
+  │    └─ Namespace: demo-newrelic  (EC2 + New Relic)
+  │         └─ 同構成アプリ (NR Python Agent 注入)
+  └─ Fargate Profile
+       └─ Namespace: demo-fargate   (Fargate + App Signals)
+            └─ 同構成アプリ (OTel Operator 注入。Agent は Deployment として別起動)
 
 RDS: PostgreSQL 16, db.t3.micro, Single-AZ, private subnet
      DB名: netwatch / ユーザー: netwatch
+     ※ 全3環境から共用
 
 CloudWatch Observability (EKS Add-on: amazon-cloudwatch-observability):
   ├─ OTel Operator → 全 Pod に OTel Python SDK を自動注入（initContainer）
-  ├─ CloudWatch Agent (ADOT) → OTLP gRPC :4315 受信 → Application Signals / X-Ray
+  ├─ CloudWatch Agent (ADOT) → OTLP HTTP/protobuf :4316 受信 → Application Signals / X-Ray
   ├─ Fluent Bit → stdout JSON → CloudWatch Logs
   └─ Container Insights → Pod/Node メトリクス収集
 
-ECR: 4リポジトリ
+New Relic Stack (Helm: nri-bundle + k8s-agents-operator):
+  ├─ k8s-agents-operator → NR Python Agent を自動注入（initContainer）
+  ├─ nri-bundle → Infrastructure Agent / KSM / Prometheus → New Relic
+  └─ Fluent Bit → stdout JSON → New Relic Logs
+
+ECR: 4リポジトリ（全3環境共用）
   obs-poc/netwatch-ui
   obs-poc/device-api
   obs-poc/alert-api
@@ -218,18 +229,37 @@ obs-poc/
 │   └── metrics-collector/
 │       └── app.py           FastAPI（ステートレス）
 ├── k8s/
-│   └── ec2/
-│       ├── netwatch-ui.yaml
-│       ├── device-api.yaml      DATABASE_URL (Secret) / METRICS_COLLECTOR_URL
-│       ├── alert-api.yaml
-│       └── metrics-collector.yaml
+│   ├── ec2/                 EC2 + App Signals 用マニフェスト（namespace: demo-ec2）
+│   │   ├── netwatch-ui.yaml
+│   │   ├── device-api.yaml      OTel inject annotation / DATABASE_URL Secret
+│   │   ├── alert-api.yaml
+│   │   └── metrics-collector.yaml
+│   ├── fargate/             Fargate + App Signals 用マニフェスト（namespace: demo-fargate）
+│   │   ├── netwatch-ui.yaml     nodeSelector なし / OTLP endpoint は CW Agent Service
+│   │   ├── device-api.yaml
+│   │   ├── alert-api.yaml
+│   │   └── metrics-collector.yaml
+│   ├── newrelic/            EC2 + New Relic 用マニフェスト（namespace: demo-newrelic）
+│   │   ├── netwatch-ui.yaml     instrumentation.newrelic.com/inject-python annotation
+│   │   ├── device-api.yaml
+│   │   ├── alert-api.yaml
+│   │   └── metrics-collector.yaml
+│   └── namespaces.yaml      demo-ec2 / demo-fargate / demo-newrelic namespace 定義
+├── helm-values/
+│   ├── newrelic-values.yaml       NR Helm 共通設定
+│   ├── newrelic-ec2-values.yaml   EC2 ノード向け追加設定
+│   └── newrelic-fargate-values.yaml (参考: Fargate+NR は本 PoC 対象外)
 ├── infra/terraform/
+│   ├── eks.tf               EKS クラスター + Managed Node Group + Fargate Profile
+│   ├── fargate.tf           Fargate Profile / Pod 実行ロール
 │   ├── rds.tf               RDS PostgreSQL db.t3.micro
-│   ├── eks.tf               EKS クラスター + ノードグループ
 │   ├── vpc.tf               VPC + サブネット + VPC エンドポイント
 │   └── variables.tf         rds_password / services リスト 等
 └── scripts/
     ├── build-push.sh        Docker build & ECR push（4サービス）
-    ├── deploy-ec2.sh        RDS Secret 作成 + K8s マニフェスト適用
-    └── load.sh              負荷生成スクリプト（16シナリオ）
+    ├── deploy-ec2.sh        demo-ec2 への K8s マニフェスト適用
+    ├── deploy-fargate.sh    demo-fargate への K8s マニフェスト適用
+    ├── deploy-newrelic.sh   demo-newrelic への K8s マニフェスト適用
+    ├── create-secrets.sh    RDS 接続情報を K8s Secret として作成
+    └── load.sh              負荷生成スクリプト（EC2/Fargate/NR 全環境対応）
 ```

@@ -14,10 +14,12 @@
 4. [Container Insights / CloudWatch Metrics 確認手順](#4-container-insights--cloudwatch-metrics-確認手順)
 5. [シナリオ別 確認ガイド（詳細）](#5-シナリオ別-確認ガイド詳細)
 6. [CloudWatch Synthetics 外形監視](#6-cloudwatch-synthetics-外形監視)
-7. [CloudWatch RUM 後日検証手順](#7-cloudwatch-rum-後日検証手順)
+7. [CloudWatch RUM 検証手順](#7-cloudwatch-rum-検証手順)
 8. [負荷テストガイド（scripts/load.sh）](#8-負荷テストガイドscriptsloadsh)
 9. [設計チェックリスト](#9-設計チェックリスト)
 10. [Alarm / SLO 設計イメージ](#10-alarm--slo-設計イメージ)
+
+> **詳細なハンズオン手順:** [docs/rum-lab.md](rum-lab.md) / [docs/custom-metrics-lab.md](custom-metrics-lab.md) / [docs/environment-comparison.md](environment-comparison.md)
 
 ---
 
@@ -31,7 +33,7 @@
 | インフラ・コンテナ監視を学ぶ | Container Insights | EKS ノード・Pod の CPU/Memory・ネットワーク・再起動回数 |
 | アプリログの活用を学ぶ | CloudWatch Logs | 構造化 JSON ログのクエリ・障害原因特定 |
 | 外形監視を体験する | Synthetics | ユーザー視点のエンドポイント死活・応答時間監視 |
-| 実ユーザー体感を測る | CloudWatch RUM（後日） | ページロード時間・Apdex・JS エラー・セッション分析 |
+| 実ユーザー体感を測る | CloudWatch RUM | ページロード時間・Core Web Vitals・JS エラー・セッション分析 |
 | 障害の一次切り分けを練習する | 全ツール組み合わせ | Tier1（外形）→ Tier2（APM）→ Tier3（ログ）の流れ |
 
 ### Tier 別の一次切り分け
@@ -651,106 +653,83 @@ aws cloudwatch put-metric-alarm \
 
 ---
 
-## 7. CloudWatch RUM 後日検証手順
+## 7. CloudWatch RUM 検証手順
 
-> **現状:** Terraform リソース（`aws_rum_app_monitor.poc`）は作成済み。netwatch-ui の `base.html` に `{{ cw_rum_snippet | safe }}` が設置済み。`CW_RUM_SNIPPET` 環境変数を Pod に渡すことで即座に有効化できる。
+CloudWatch RUM は実装済みです。`.env` に App Monitor ID と Cognito Identity Pool ID を設定して `make ec2-appsignals-enable-rum` を実行するだけで有効化できます。詳細な手順は **[docs/rum-lab.md](rum-lab.md)** を参照してください。
 
 ---
 
-### 7-1. App Monitor の確認
+### 7-1. 有効化手順
+
+```bash
+# Terraform から値を取得して .env に設定
+terraform -chdir=infra/terraform output rum_app_monitor_id
+terraform -chdir=infra/terraform output cognito_identity_pool_id
+
+# .env に追記
+# CW_RUM_APP_MONITOR_ID=<UUID>
+# CW_RUM_IDENTITY_POOL_ID=ap-northeast-1:<UUID>
+# CW_RUM_REGION=ap-northeast-1
+
+# RUM 有効化（netwatch-ui をロールアウト再起動）
+make ec2-appsignals-enable-rum
+```
 
 **コンソール URL:**  
-https://ap-northeast-1.console.aws.amazon.com/cloudwatch/home?region=ap-northeast-1#rum:overview
-
-Terraform で作成済みの App Monitor:
-- **名前:** `obs-poc-rum`
-- **Domain:** `localhost`（後日 LoadBalancer DNS に変更）
-- **Telemetries:** `errors`, `performance`, `http`
-- **Session sample rate:** 100%
+https://ap-northeast-1.console.aws.amazon.com/cloudwatch/home?region=ap-northeast-1#rum:appMonitorList
 
 ---
 
-### 7-2. RUM Snippet の取得と Pod への適用
+### 7-2. 動作確認
 
-**Step 1: App Monitor から Snippet を取得**
-```bash
-# App Monitor ID を確認
-aws rum list-app-monitors \
-  --region ap-northeast-1 \
-  --query 'AppMonitorSummaryList[?Name==`obs-poc-rum`].Id' \
-  --output text
-# CloudWatch RUM コンソール → obs-poc-rum → JavaScript Snippet からコピーでもよい
-```
+1. ブラウザで `${EC2_BASE}/rum-test` を開く（サイドバーの **RUM Test** リンク）
+2. ステータスが **ENABLED** / `✓ AwsRumClient 初期化済み` であることを確認
+3. 各ボタンでテレメトリを発生させ、CloudWatch RUM コンソールで確認:
 
-**Step 2: Pod に環境変数として渡す**
-```bash
-kubectl set env deployment/netwatch-ui \
-  -n demo-ec2 \
-  CW_RUM_SNIPPET='<script>...RUM snippet here...</script>'
-```
-
-**Step 3: 動作確認**
-1. ブラウザで `${EC2_BASE}` を開く
-2. 開発者ツール → Network タブで `dataplane.rum.ap-northeast-1.amazonaws.com` へのリクエストを確認
-3. CloudWatch RUM コンソールで数分後にセッションデータが表示されることを確認
+| ボタン | RUM コンソールの確認先 |
+|--------|---------------------|
+| JavaScript エラー | Errors タブ → JavaScript errors |
+| HTTP エラー (404) | HTTP requests タブ → Status codes |
+| カスタムイベント | Events タブ |
+| リロード | Performance タブ → Page load steps |
 
 ---
 
-### 7-3. base.html のスニペット設置場所
-
-`apps/netwatch-ui/templates/base.html` の `<head>` タグ内に設置済み:
-
-```html
-<head>
-  <meta charset="UTF-8">
-  ...
-  {{ cw_rum_snippet | safe }}   <!-- ← ここに RUM snippet が挿入される -->
-  {{ nr_browser_snippet | safe }}
-</head>
-```
-
-`CW_RUM_SNIPPET` 環境変数を渡すだけで有効化。コード変更不要。
-
----
-
-### 7-4. RUM で見るべき項目
+### 7-3. RUM で見るべき項目
 
 | 項目 | 場所 | 見るポイント |
 |-----|------|-----------|
 | Page load 時間（ページ別）| RUM > Performance > Page Loads | `/devices/{id}` が遅い → Slow Query の影響が反映されるか |
-| Apdex スコア | RUM > Performance > Apdex | 0.9以上が目標。Slow Query 時に低下するか |
-| JS Error 件数・内容 | RUM > Errors > JS Errors | `/chaos` 画面の「JSエラー発生」ボタンで記録されるか |
-| HTTP Request エラー | RUM > Errors > HTTP Errors | Error Inject 時に HTTP 500 が記録されるか |
+| Core Web Vitals | RUM > Performance > Page load steps | LCP / FID / CLS の計測値 |
+| JS Error 件数・内容 | RUM > Errors > JS Errors | `/rum-test` の「JavaScript エラー」ボタンで記録されるか |
+| HTTP Request エラー | RUM > HTTP requests > Status codes | Error Inject 時に HTTP 500 が記録されるか |
 | Session 数 | RUM > Overview | スクリプト実行中のセッション数 |
 
 ---
 
-### 7-5. 検証シナリオ（RUM）
+### 7-4. 検証シナリオ（RUM）
 
-**シナリオ 1: ページロードの記録確認**
-1. ブラウザで `${EC2_BASE}` を開く
-2. RUM コンソールで「Page Load」が記録されるか確認（1〜2分後に反映）
-
-**シナリオ 2: Slow Query 時の Page load 悪化確認**
+**シナリオ 1: Slow Query 時の Page load 悪化確認**
 1. Slow Query ON（5秒遅延）
 2. ブラウザで `/devices` と `/devices/TKY-CORE-001` を開く
 3. RUM の Page load 時間グラフで遅延が反映されているか確認
 4. Application Signals の Latency P99 と比較（RUM は実ブラウザ時間 / App Signals はサーバー処理時間）
 
-**シナリオ 3: JS エラーの記録確認**
-1. ブラウザで `${EC2_BASE}/chaos` を開く
-2. 「JS エラー発生」ボタンをクリック
-3. RUM コンソール > Errors > JS Errors でエラーが記録されていることを確認
-
-**シナリオ 4: Error Inject 時の HTTP エラー記録**
+**シナリオ 2: Error Inject 時の HTTP エラー記録**
 1. Error Inject 30% ON
 2. ブラウザで `/devices` を数回リロード
-3. RUM > Errors > HTTP Errors で HTTP 500 が記録されているか確認
+3. RUM > HTTP requests > Status codes で HTTP 500 が記録されているか確認
 4. Application Signals の Fault rate と照合
+
+**シナリオ 3: X-Ray との連携確認**
+1. ブラウザで `/devices/TKY-CORE-001` を開く
+2. RUM コンソール > User sessions → セッションを選択
+3. HTTP リクエスト行の「View in X-Ray」リンクをクリック
+4. ブラウザ → netwatch-ui → device-api → metrics-collector の 3 ホップトレースを確認
 
 ---
 
-### 7-6. Application Signals との連携
+### 7-5. Application Signals との連携
 
 RUM（ユーザー視点）→ App Signals（サービス視点）→ Traces（リクエスト視点）→ Logs（コード視点）の連携:
 
@@ -890,6 +869,14 @@ fields @timestamp, @message
 - [ ] Error Inject 時に Canary が FAIL になることを確認した
 - [ ] Slow Query 時に Canary は PASS だが Duration が悪化することを確認した（外形監視の限界）
 - [ ] Canary を停止した（課金防止）
+
+### CloudWatch RUM
+
+- [ ] `make ec2-appsignals-enable-rum` で RUM を有効化した
+- [ ] `/rum-test` ページで `✓ AwsRumClient 初期化済み` を確認した
+- [ ] JS エラー / HTTP エラー / カスタムイベントを発生させ RUM コンソールで記録を確認した
+- [ ] Slow Query シナリオで RUM の Page load 時間悪化と App Signals Latency P99 を比較した
+- [ ] User sessions → View in X-Ray で RUM から X-Ray トレースへのリンクを確認した
 
 ---
 

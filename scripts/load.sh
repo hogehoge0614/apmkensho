@@ -13,7 +13,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-EC2_BASE="${EC2_BASE:-http://a07b5eaa6395749668756ad4aaeec789-1181821442.ap-northeast-1.elb.amazonaws.com}"
+EC2_BASE="${EC2_BASE:-http://localhost:8080}"
 FARGATE_BASE="${FARGATE_BASE:-http://localhost:8081}"
 NEWRELIC_BASE="${NEWRELIC_BASE:-}"
 ROUNDS="${ROUNDS:-3}"

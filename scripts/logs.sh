@@ -2,7 +2,7 @@
 set -euo pipefail
 
 NAMESPACE="${1:-demo-ec2}"
-SERVICE="${2:-frontend-ui}"
+SERVICE="${2:-netwatch-ui}"
 TAIL="${3:-50}"
 
 echo "==> Logs for ${SERVICE} in ${NAMESPACE} (last ${TAIL} lines)"
