@@ -64,10 +64,10 @@ resource "aws_cloudwatch_dashboard" "obs_poc" {
           view   = "timeSeries"
           region = var.aws_region
           metrics = [
-            ["ApplicationSignals/OperationMetrics", "Latency", "Environment", "demo-ec2", "Service", "frontend-ui", { "stat" : "p99" }],
-            [".", ".", ".", ".", "Service", "backend-for-frontend", { "stat" : "p99" }],
-            [".", ".", ".", ".", "Service", "order-api", { "stat" : "p99" }],
-            [".", ".", ".", ".", "Service", "payment-api", { "stat" : "p99" }]
+            ["ApplicationSignals/OperationMetrics", "Latency", "Environment", "demo-ec2", "Service", "netwatch-ui", { "stat" : "p99" }],
+            [".", ".", ".", ".", "Service", "alert-api", { "stat" : "p99" }],
+            [".", ".", ".", ".", "Service", "device-api", { "stat" : "p99" }],
+            [".", ".", ".", ".", "Service", "metrics-collector", { "stat" : "p99" }]
           ]
         }
       },
@@ -83,10 +83,10 @@ resource "aws_cloudwatch_dashboard" "obs_poc" {
           view   = "timeSeries"
           region = var.aws_region
           metrics = [
-            ["ApplicationSignals/OperationMetrics", "Latency", "Environment", "demo-fargate", "Service", "frontend-ui", { "stat" : "p99" }],
-            [".", ".", ".", ".", "Service", "backend-for-frontend", { "stat" : "p99" }],
-            [".", ".", ".", ".", "Service", "order-api", { "stat" : "p99" }],
-            [".", ".", ".", ".", "Service", "payment-api", { "stat" : "p99" }]
+            ["ApplicationSignals/OperationMetrics", "Latency", "Environment", "demo-fargate", "Service", "netwatch-ui", { "stat" : "p99" }],
+            [".", ".", ".", ".", "Service", "alert-api", { "stat" : "p99" }],
+            [".", ".", ".", ".", "Service", "device-api", { "stat" : "p99" }],
+            [".", ".", ".", ".", "Service", "metrics-collector", { "stat" : "p99" }]
           ]
         }
       },
@@ -102,9 +102,9 @@ resource "aws_cloudwatch_dashboard" "obs_poc" {
           view   = "timeSeries"
           region = var.aws_region
           metrics = [
-            ["ApplicationSignals/OperationMetrics", "Error", "Environment", "demo-ec2", "Service", "frontend-ui"],
-            [".", ".", ".", ".", "Service", "payment-api"],
-            [".", ".", ".", ".", "Service", "order-api"]
+            ["ApplicationSignals/OperationMetrics", "Error", "Environment", "demo-ec2", "Service", "netwatch-ui"],
+            [".", ".", ".", ".", "Service", "metrics-collector"],
+            [".", ".", ".", ".", "Service", "device-api"]
           ]
         }
       },
@@ -120,9 +120,9 @@ resource "aws_cloudwatch_dashboard" "obs_poc" {
           view   = "timeSeries"
           region = var.aws_region
           metrics = [
-            ["ApplicationSignals/OperationMetrics", "Error", "Environment", "demo-fargate", "Service", "frontend-ui"],
-            [".", ".", ".", ".", "Service", "payment-api"],
-            [".", ".", ".", ".", "Service", "order-api"]
+            ["ApplicationSignals/OperationMetrics", "Error", "Environment", "demo-fargate", "Service", "netwatch-ui"],
+            [".", ".", ".", ".", "Service", "metrics-collector"],
+            [".", ".", ".", ".", "Service", "device-api"]
           ]
         }
       },

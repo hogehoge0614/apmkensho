@@ -1,665 +1,130 @@
-# NetWatch Observability Lab ガイド
+# NetWatch Observability Lab — 全環境ガイド
 
-> **対象環境:** NetWatch PoC (EKS on EC2, ap-northeast-1) / Namespace: `demo-ec2`  
-> **環境構築・セットアップ手順:** [README.md](../README.md) を参照  
-> **障害対応 Runbook:** [runbook.md](runbook.md) を参照
+> **このドキュメントについて:** 4環境の全体像と実施フローを記載した入口ガイドです。各環境の詳細な手順は個別ラボファイルを参照してください。
+>
+> **環境構築・セットアップ手順:** [docs/setup.md](setup.md)  
+> **障害対応 Runbook:** [docs/runbook.md](runbook.md)  
+> **環境比較（詳細）:** [docs/environment-comparison.md](environment-comparison.md)
 
 ---
 
 ## 目次
 
-1. [このガイドについて（推奨実施フロー）](#1-このガイドについて推奨実施フロー)
-2. [カオスシナリオ クイックリファレンス](#2-カオスシナリオ-クイックリファレンス)
-3. [Application Signals 検証手順](#3-application-signals-検証手順)
-4. [Container Insights / CloudWatch Metrics 確認手順](#4-container-insights--cloudwatch-metrics-確認手順)
-5. [シナリオ別 確認ガイド（詳細）](#5-シナリオ別-確認ガイド詳細)
-6. [CloudWatch Synthetics 外形監視](#6-cloudwatch-synthetics-外形監視)
-7. [CloudWatch RUM 検証手順](#7-cloudwatch-rum-検証手順)
-8. [負荷テストガイド（scripts/load.sh）](#8-負荷テストガイドscriptsloadsh)
-9. [設計チェックリスト](#9-設計チェックリスト)
-10. [Alarm / SLO 設計イメージ](#10-alarm--slo-設計イメージ)
-
-> **詳細なハンズオン手順:** [docs/rum-lab.md](rum-lab.md) / [docs/custom-metrics-lab.md](custom-metrics-lab.md) / [docs/environment-comparison.md](environment-comparison.md)
+1. [4環境マトリクス](#1-4環境マトリクス)
+2. [各環境の個別ラボ](#2-各環境の個別ラボ)
+3. [共通カオスシナリオ クイックリファレンス](#3-共通カオスシナリオ-クイックリファレンス)
+4. [環境間比較の実施手順](#4-環境間比較の実施手順)
+5. [CloudWatch RUM 検証（EC2 + App Signals）](#5-cloudwatch-rum-検証ec2--app-signals)
+6. [カスタムメトリクス検証（EC2 + App Signals）](#6-カスタムメトリクス検証ec2--app-signals)
+7. [NR Browser 検証（EC2 + New Relic）](#7-nr-browser-検証ec2--new-relic)
+8. [カスタムメトリクス検証（EC2 + New Relic / NR Flex）](#8-カスタムメトリクス検証ec2--new-relic--nr-flex)
+9. [環境別 利用可能機能まとめ](#9-環境別-利用可能機能まとめ)
 
 ---
 
-## 1. このガイドについて（推奨実施フロー）
+## 1. 4環境マトリクス
 
-### 学習目的の全体像
-
-| 目的 | 対応する機能 | 習得できること |
-|------|------------|---------------|
-| APMの基本を身につける | Application Signals | サービスマップ・レイテンシ・エラー率・SLO定義・トレース読み方 |
-| インフラ・コンテナ監視を学ぶ | Container Insights | EKS ノード・Pod の CPU/Memory・ネットワーク・再起動回数 |
-| アプリログの活用を学ぶ | CloudWatch Logs | 構造化 JSON ログのクエリ・障害原因特定 |
-| 外形監視を体験する | Synthetics | ユーザー視点のエンドポイント死活・応答時間監視 |
-| 実ユーザー体感を測る | CloudWatch RUM | ページロード時間・Core Web Vitals・JS エラー・セッション分析 |
-| 障害の一次切り分けを練習する | 全ツール組み合わせ | Tier1（外形）→ Tier2（APM）→ Tier3（ログ）の流れ |
-
-### Tier 別の一次切り分け
-
-```
-Tier 1 (外形監視)    : Synthetics Canary が FAIL → サービス全体に影響あり
-Tier 2 (APM)        : Application Signals でどのサービス・オペレーションが問題か特定
-Tier 3 (ログ)        : CloudWatch Logs でエラーの根本原因（SQL遅延・スタックトレース）を確認
-```
-
-### 推奨実施フロー
-
-```bash
-source .env   # EC2_BASE を読み込む
-
-# ① ベースライン確認（正常時の数値を把握）
-./scripts/load.sh normal-device-detail
-# → Application Signals で4サービス表示、Service Map で3段構造を確認
-
-# ② Slow Query シナリオ
-curl -X POST "${EC2_BASE}/api/chaos/slow-query?enable=true&duration_ms=5000"
-./scripts/load.sh slow-query-devices
-# → App Signals で device-api Latency P99 急上昇、X-Ray で device-api span が長い
-curl -X POST "${EC2_BASE}/api/chaos/reset"
-
-# ③ Error Inject シナリオ
-curl -X POST "${EC2_BASE}/api/chaos/error-inject?rate=30"
-./scripts/load.sh error-inject-devices
-# → App Signals で device-api Fault rate ≈30%、netwatch-ui にも伝播
-curl -X POST "${EC2_BASE}/api/chaos/reset"
-
-# ④ Alert Storm シナリオ
-curl -X POST "${EC2_BASE}/api/chaos/alert-storm?enable=true"
-./scripts/load.sh alert-storm-alerts
-# → alert-api Throughput 急増、Logs でボリューム急増
-curl -X POST "${EC2_BASE}/api/chaos/reset"
-
-# ⑤ Synthetics（外形監視と内部監視の組み合わせ）
-aws synthetics start-canary --name obs-poc-health-check --region ap-northeast-1
-curl -X POST "${EC2_BASE}/api/chaos/error-inject?rate=80"
-# → Canary FAIL を確認
-curl -X POST "${EC2_BASE}/api/chaos/reset"
-aws synthetics stop-canary --name obs-poc-health-check --region ap-northeast-1
-```
+| 環境 | アクセス | Namespace | 特徴 |
+|------|---------|-----------|------|
+| **EKS on EC2 + App Signals** | `make port-forward-ec2` → :8080 | `eks-ec2-appsignals` | フル機能 (APM / ログ / RUM / StatsD) |
+| **EKS on EC2 + New Relic** | `make port-forward-newrelic` → :8082 | `eks-ec2-newrelic` | フル機能 (APM / ログ / Browser / Flex) |
+| **EKS on Fargate + App Signals** | `make port-forward-fargate` → :8081 | `eks-fargate-appsignals` | Pod メトリクスのみ、StatsD 利用不可 |
+| **EKS on Fargate + New Relic** | `make port-forward-fargate-newrelic` → :8083 | `eks-fargate-newrelic` | **APM のみ**（インフラ・ログ・Flex 利用不可） |
 
 ---
 
-## 2. カオスシナリオ クイックリファレンス
+## 2. 各環境の個別ラボ
 
-### 操作コマンド
+詳細な手順・チェックリスト・Alarm/SLO 設計例は以下の各ファイルを参照。
+
+| ラボ | 対象環境 | ファイル |
+|------|---------|---------|
+| **EKS on EC2 + CloudWatch App Signals** | eks-ec2-appsignals | [lab-eks-ec2-appsignals.md](lab-eks-ec2-appsignals.md) |
+| **EKS on EC2 + New Relic** | eks-ec2-newrelic | [lab-eks-ec2-newrelic.md](lab-eks-ec2-newrelic.md) |
+| **EKS on Fargate + CloudWatch App Signals** | eks-fargate-appsignals | [lab-eks-fargate-appsignals.md](lab-eks-fargate-appsignals.md) |
+| **EKS on Fargate + New Relic（APM only）** | eks-fargate-newrelic | [lab-eks-fargate-newrelic.md](lab-eks-fargate-newrelic.md) |
+
+---
+
+## 3. 共通カオスシナリオ クイックリファレンス
+
+全4環境で共通のカオス API が使用できる。`BASE` を各環境のエンドポイントに置き換えて実行する。
 
 ```bash
-source .env   # EC2_BASE を読み込む
+source .env
+# BASE を使いたい環境のエンドポイントに置き換える
+# EC2 App Signals: BASE=${EC2_AS_BASE}
+# EC2 New Relic:   BASE=${EC2_NR_BASE}
+# Fargate AS:      BASE=${FARGATE_AS_BASE}
+# Fargate NR:      BASE=${FARGATE_NR_BASE}
 
 # Slow Query ON（5秒遅延）
-curl -X POST "${EC2_BASE}/api/chaos/slow-query?enable=true&duration_ms=5000"
-
-# Slow Query OFF
-curl -X POST "${EC2_BASE}/api/chaos/slow-query?enable=false&duration_ms=3000"
+curl -X POST "${BASE}/api/chaos/slow-query?enable=true&duration_ms=5000"
 
 # Error Inject ON（30%）
-curl -X POST "${EC2_BASE}/api/chaos/error-inject?rate=30"
+curl -X POST "${BASE}/api/chaos/error-inject?rate=30"
 
-# Error Inject OFF
-curl -X POST "${EC2_BASE}/api/chaos/error-inject?rate=0"
-
-# Alert Storm 発動（60件を0.3秒間隔で生成、約18秒で完了）
-curl -X POST "${EC2_BASE}/api/chaos/alert-storm?enable=true"
+# Alert Storm
+curl -X POST "${BASE}/api/chaos/alert-storm?enable=true"
 
 # 全カオスリセット
-curl -X POST "${EC2_BASE}/api/chaos/reset"
+curl -X POST "${BASE}/api/chaos/reset"
 
-# 現在のカオス状態確認
-curl -s "${EC2_BASE}/api/chaos/state" | python3 -m json.tool
+# カオス状態確認
+curl -s "${BASE}/api/chaos/state" | python3 -m json.tool
 ```
 
-> ブラウザから操作する場合は `${EC2_BASE}/chaos` のカオスコントロール画面を使用してください。
+### シナリオ別 学習ポイント
 
-### シナリオ別 確認先一覧
-
-| シナリオ | 主な確認先 | 期待する見え方 |
-|---------|-----------|--------------|
-| **正常時** | App Signals > Services / Service Map | 4サービス表示、3段グラフ、全 Fault rate = 0% |
-| **Slow Query** | App Signals > device-api > Latency P99 | 5000ms 以上に急増 |
-| **Slow Query** | X-Ray > Traces > device-api span | span duration が 5秒以上 |
-| **Slow Query** | Logs Insights: `filter @message like "slow_query"` | `event: slow_query`, `sleep_ms: 5000` |
-| **Error Inject** | App Signals > device-api > Fault rate | 設定確率に比例して上昇（例: 30%設定 → 約30%） |
-| **Error Inject** | App Signals > netwatch-ui > Fault rate | device-api と連動して上昇（エラー伝播） |
-| **Error Inject** | X-Ray > Traces > `fault = true` | エラー span（赤）の詳細で HTTP 500 を確認 |
-| **Alert Storm** | App Signals > alert-api > Throughput | 急激なスパイク（通常 < 1 req/s → Storm 中: ~3-5 req/s） |
-| **Alert Storm** | Logs Insights: `stats count(*) by bin(1m)` | ログ件数が Storm 中に急増 |
+| シナリオ | CloudWatch App Signals | New Relic |
+|---------|----------------------|-----------|
+| **Slow Query** | X-Ray Traces で device-api span が長い。Logs Insights で `slow_query` 検索 | Transaction Traces に自動キャプチャ。Databases タブで DB クエリ時間を確認 |
+| **Error Inject** | App Signals Fault rate。X-Ray `fault = true` フィルタで手動検索 | Errors Inbox で自動グルーピング。エラー伝播も Service Map で確認 |
+| **Alert Storm** | App Signals > alert-api Throughput スパイク。Logs Insights でボリューム集計 | APM > alert-api Throughput。NR Logs で `message:"alert_storm"` 検索（EC2 のみ） |
 
 ---
 
-## 3. Application Signals 検証手順
+## 4. 環境間比較の実施手順
 
-### 前提
+全環境に同時に負荷をかけて、同一シナリオ下での各ツールの見え方を比較する。
 
 ```bash
 source .env
-make load   # トレース・メトリクスが出ていない場合は先に負荷生成
+
+# ① 全環境同時負荷（最も効率的な比較方法）
+make load
+
+# ② 特定シナリオの比較
+# 全環境で同時に Slow Query を発動 → 各コンソールを並べて確認
+curl -X POST "${EC2_AS_BASE}/api/chaos/slow-query?enable=true&duration_ms=5000"
+curl -X POST "${EC2_NR_BASE}/api/chaos/slow-query?enable=true&duration_ms=5000"
+curl -X POST "${FARGATE_AS_BASE}/api/chaos/slow-query?enable=true&duration_ms=5000"
+curl -X POST "${FARGATE_NR_BASE}/api/chaos/slow-query?enable=true&duration_ms=5000"
+make load
+curl -X POST "${EC2_AS_BASE}/api/chaos/reset"
+curl -X POST "${EC2_NR_BASE}/api/chaos/reset"
+curl -X POST "${FARGATE_AS_BASE}/api/chaos/reset"
+curl -X POST "${FARGATE_NR_BASE}/api/chaos/reset"
 ```
+
+### 比較のための並列確認先
+
+| 観点 | CloudWatch (EC2) | New Relic (EC2) |
+|-----|-----------------|----------------|
+| サービスマップ | App Signals > Service Map | APM > netwatch-ui > Service Map |
+| レイテンシ P99 | App Signals > device-api > Latency | APM > device-api > Transactions |
+| エラー | App Signals > Fault rate | Errors Inbox |
+| ログ検索 | Logs Insights（CFQL） | NR Logs（全文検索） |
+| トレース | X-Ray Traces（フィルタ手動） | Distributed Tracing（Errors Inbox から1クリック） |
+| コンテナ監視 | Container Insights | Kubernetes Explorer |
 
 ---
 
-### 3-1. サービス一覧の確認
+## 5. CloudWatch RUM 検証（EC2 + App Signals）
 
-**コンソール URL:**  
-https://ap-northeast-1.console.aws.amazon.com/cloudwatch/home?region=ap-northeast-1#application-signals:services
+CloudWatch RUM は実ブラウザのページロード・エラー・HTTP リクエストを収集する実ユーザー監視サービス。
 
-**手順:**
-1. 上記 URL を開く
-2. 以下の4サービスが表示されていることを確認:
-   - `netwatch-ui`
-   - `device-api`
-   - `metrics-collector`
-   - `alert-api`
-3. 各サービスの「P99 Latency」「Error rate」「Request count」列を確認
-4. Environment 列が `demo-ec2` であることを確認
-
-**見えない場合の対処:**
-- `make load` を実行してから2〜3分待つ
-- `kubectl get pods -n demo-ec2` で Pod が Running か確認
-- `kubectl describe pod -n demo-ec2 -l app=netwatch-ui | grep -i otel` で OTel init container が注入されているか確認
-
----
-
-### 3-2. Service Map（3段の依存グラフ）
-
-**コンソール URL:**  
-https://ap-northeast-1.console.aws.amazon.com/cloudwatch/home?region=ap-northeast-1#application-signals:map
-
-**確認ポイント:**
-```
-[Internet/Client] → netwatch-ui → device-api → metrics-collector
-                                ↘ alert-api
-```
-
-1. 各エッジ（矢印）にホバーすると「Latency P99」「Error rate」「Request count」が表示される
-2. ノードの色でヘルス状態を確認（緑=正常、黄=警告、赤=エラー）
-3. 右上の時間範囲を「Last 1 hour」に設定する
-
----
-
-### 3-3. Service Detail（各サービスの詳細）
-
-**netwatch-ui:**
-- Operations タブ: `GET /`, `GET /devices`, `GET /devices/{device_id}`, `GET /alerts` の各エンドポイント別メトリクス
-- Dependencies タブ: `device-api` と `alert-api` が下流として表示されることを確認
-
-**device-api:**
-- Operations タブ: `GET /devices`, `GET /devices/{device_id}`, `POST /chaos/*`
-- Dependencies タブ: `metrics-collector` が下流として表示されることを確認
-
-**metrics-collector:**
-- Operations タブ: `GET /metrics/{device_id}`（device-api からのみ呼ばれる）
-
-**alert-api:**
-- Operations タブ: `GET /alerts`（Alert Storm 中は Throughput が急増する）
-
----
-
-### 3-4. Operation別 Latency（P50 / P90 / P99）
-
-1. Services → `device-api` → Operations タブ
-2. `GET /devices/{device_id}` 行をクリック
-3. Latency グラフで P50 / P90 / P99 の各パーセンタイルを確認
-
-**正常時の目安:**
-
-| Operation | P50 | P90 | P99 |
-|-----------|-----|-----|-----|
-| `GET /devices` | < 100ms | < 200ms | < 500ms |
-| `GET /devices/{id}` | < 150ms | < 300ms | < 600ms |
-| `GET /alerts` | < 50ms | < 100ms | < 200ms |
-
----
-
-### 3-5. Error rate / Fault rate
-
-- **Error rate:** クライアントエラー（4xx）の割合
-- **Fault rate:** サーバーエラー（5xx）の割合。Error Inject シナリオで上昇する
-
-1. Services → `device-api` → Overview タブの「Fault rate」グラフを確認
-2. Error Inject ON 時は Fault rate が設定値に比例する（例: 30% → 約30%）
-3. `netwatch-ui` の Fault rate も上昇していることを確認（下流エラーの伝播）
-
----
-
-### 3-6. Trace 一覧・Trace 詳細
-
-**コンソール URL:**  
-https://ap-northeast-1.console.aws.amazon.com/cloudwatch/home?region=ap-northeast-1#xray:traces/query
-
-**フィルタ例:**
-
-```
-# 全トレース
-service("netwatch-ui")
-
-# エラートレース
-service("device-api") AND fault = true
-
-# 遅いトレース（2秒以上）
-service("device-api") AND duration > 2
-```
-
----
-
-### 3-7. 3ホップトレースの読み方
-
-**前提:** `./scripts/load.sh normal-device-detail` を実行してトレースを生成する
-
-1. X-Ray Traces でトレース一覧を開く
-2. `GET /devices/TKY-CORE-001` に対応するトレースをクリック
-3. Trace Map で以下の span 構造を確認:
-
-```
-netwatch-ui (全体 duration)
-├── HTTP GET /devices/TKY-CORE-001        ... Span A（netwatch-ui）
-│   └── device-api (Span B)
-│       ├── SELECT FROM devices WHERE ... （DB クエリ、トレース外）
-│       └── HTTP GET /metrics/TKY-CORE-001
-│           └── metrics-collector (Span C)
-```
-
-4. 各 span の「Start time」と「Duration」を確認
-5. **Span B の duration が長い場合** → DB または metrics-collector に問題あり
-6. **Span C の duration が長い場合** → metrics-collector 自体に問題あり
-7. **Slow Query シナリオでは Span B が 5秒以上になり、Span C は短いまま** → DB 起因と判断できる
-
----
-
-### 3-8. Slow Query 時の見え方
-
-**事前準備:**
-```bash
-source .env
-curl -X POST "${EC2_BASE}/api/chaos/slow-query?enable=true&duration_ms=5000"
-./scripts/load.sh slow-query-devices
-```
-
-**Application Signals での確認:**
-1. Services → `device-api` → Operations タブ
-2. `GET /devices` と `GET /devices/{device_id}` の P99 Latency が 5000ms 以上になることを確認
-3. Services → `netwatch-ui` → Operations タブ
-4. `/devices` と `/devices/{id}` のレイテンシも上昇していることを確認（エンドツーエンドの遅延伝播）
-
-**注目ポイント:**
-- Service Map で `device-api` ノードの色が変化するか確認
-- Trace Map で device-api span は長いが、metrics-collector span は短いまま → DB 待ちが原因と特定できる
-
----
-
-### 3-9. Error Inject 時の見え方
-
-**事前準備:**
-```bash
-source .env
-curl -X POST "${EC2_BASE}/api/chaos/error-inject?rate=30"
-./scripts/load.sh error-inject-devices
-```
-
-**Application Signals での確認:**
-1. Services → `device-api` → Overview タブの「Fault rate」グラフで約30%のエラー率を確認
-2. Services → `netwatch-ui` → Overview タブで **Fault rate が device-api に連動して上昇** することを確認（エラー伝播）
-3. X-Ray Traces: `service("device-api") AND fault = true`
-4. エラートレースをクリックして span の詳細で `HTTP 500` を確認
-
----
-
-### 3-10. Alert Storm 時の見え方
-
-**事前準備:**
-```bash
-source .env
-curl -X POST "${EC2_BASE}/api/chaos/alert-storm?enable=true"
-./scripts/load.sh alert-storm-alerts
-```
-
-**Application Signals での確認:**
-1. Services → `alert-api` → Overview タブの「Request count」グラフで急増を確認
-2. Storm は約18秒（60件 × 0.3秒間隔）で完了するため、グラフのスパイクを探す
-3. Throughput: 通常 < 1 req/s → Storm 中: ~3-5 req/s
-4. Latency は変化が少ない（in-memory 処理のため）
-
----
-
-## 4. Container Insights / CloudWatch Metrics 確認手順
-
-### 推奨確認順序
-
-```
-1. Container Insights（EKS全体・Node・Pod の状態を俯瞰）
-       ↓
-2. Application Signals Metrics（どのサービスのどのオペレーションに問題か）
-       ↓
-3. X-Ray Traces（問題のあるリクエストのトレース詳細）
-       ↓
-4. CloudWatch Logs（根本原因のログを確認）
-```
-
----
-
-### 4-1. Container Insights の確認
-
-**コンソール URL:**  
-https://ap-northeast-1.console.aws.amazon.com/cloudwatch/home?region=ap-northeast-1#container-insights:performance
-
-**EKS Cluster 全体:**
-1. ドロップダウンで「EKS Clusters」→ `obs-poc` を選択
-2. Node CPU 使用率（t3.small は 2vCPU。全体で60%超えたら注意）
-3. Node Memory 使用率（t3.small は 2GB。全体で80%超えたら注意）
-
-**Pod 別:**
-1. 「EKS Pods」ビューに切り替え
-2. Namespace: `demo-ec2` でフィルタ
-
-| Pod | 正常時 CPU | 正常時 Memory | 異常時の兆候 |
-|-----|----------|-------------|------------|
-| netwatch-ui | < 10% | < 100MB | Error Inject 時に若干上昇 |
-| device-api | < 15% | < 150MB | Slow Query 時は I/O 待ちのため変化少 |
-| metrics-collector | < 5% | < 80MB | — |
-| alert-api | < 5% | < 80MB | Alert Storm 時にメモリ一時上昇 |
-
-**Pod 再起動回数:**
-- 「EKS Pods」ビューで「Restart count」列を確認
-- 0 であることを確認（OOM Kill や Liveness Probe 失敗時に増加）
-
----
-
-### 4-2. Application Signals Metrics（CloudWatch Metrics から直接参照）
-
-**Namespace:** `ApplicationSignals/OperationMetrics`
-
-| メトリクス名 | ディメンション | 説明 |
-|------------|-------------|------|
-| `Latency` | Service, Operation, Environment | レイテンシ（統計: p50/p90/p99 を使用）|
-| `Error` | Service, Operation, Environment | 4xx エラーカウント |
-| `Fault` | Service, Operation, Environment | 5xx エラーカウント |
-| `RequestCount` | Service, Operation, Environment | リクエスト数 |
-
----
-
-### 4-3. シナリオ別確認表
-
-| シナリオ | 確認メトリクス | 場所 | 期待される変化 |
-|---------|-------------|------|--------------|
-| **正常時** | device-api Latency P99 | App Signals > device-api | < 500ms |
-| **正常時** | 全サービス Fault rate | App Signals > Services | 0% |
-| **Slow Query** | device-api Latency P99 | App Signals > device-api | 5000ms 以上 |
-| **Slow Query** | device-api CPU | Container Insights > EKS Pods | 変化少（I/O待ち）← ポイント |
-| **Error Inject** | device-api Fault rate | App Signals > device-api | 設定確率に比例 |
-| **Error Inject** | netwatch-ui Fault rate | App Signals > netwatch-ui | device-api と連動 |
-| **Alert Storm** | alert-api RequestCount | App Signals > alert-api | 急激なスパイク |
-| **Alert Storm** | alert-api Memory | Container Insights | 一時的な上昇 |
-
----
-
-## 5. シナリオ別 確認ガイド（詳細）
-
-### 5-1. 正常時のベースライン
-
-**目的:** 障害発生時の比較基準を把握する。最初の検証前にスクリーンショットを撮っておくと比較が容易になる。
-
-```bash
-source .env
-./scripts/load.sh normal-device-detail
-```
-
-**期待値:**
-
-| 観点 | 場所 | 期待値 |
-|-----|------|-------|
-| netwatch-ui P99 Latency | App Signals > netwatch-ui | < 1000ms |
-| device-api P99 Latency | App Signals > device-api | < 600ms |
-| metrics-collector P99 Latency | App Signals > metrics-collector | < 200ms |
-| alert-api P99 Latency | App Signals > alert-api | < 200ms |
-| 全サービス Fault rate | App Signals > Services | 0% |
-| 3ホップトレース全体 duration | X-Ray Traces | < 1000ms |
-
----
-
-### 5-2. Slow Query 検証
-
-**想定する障害:** DB のインデックス漏れ・フルスキャン・ロック待ちによる応答遅延
-
-```bash
-source .env
-# Step 1: カオス画面（${EC2_BASE}/chaos）から「Slow Query ON」またはAPIで有効化
-curl -X POST "${EC2_BASE}/api/chaos/slow-query?enable=true&duration_ms=5000"
-
-# Step 2: 負荷生成
-./scripts/load.sh slow-query-devices
-
-# Step 3: 確認後にリセット
-curl -X POST "${EC2_BASE}/api/chaos/reset"
-```
-
-**[Application Signals]**
-1. Services → `device-api` → Latency P99 が 5000ms 以上
-2. Operations タブで `GET /devices` と `GET /devices/{device_id}` 両方が遅いことを確認
-3. Services → `netwatch-ui` → レイテンシも上昇（エンドツーエンドの遅延伝播）
-
-**[X-Ray Traces]**
-```
-フィルタ: service("device-api") AND duration > 2
-```
-- Trace Map で device-api span が 5秒以上になっていることを確認
-- metrics-collector span は短いまま → DB 待ちが原因と判断できる
-
-**[CloudWatch Logs Insights]**
-```sql
-fields @timestamp, @message
-| filter @message like "slow_query"
-| sort @timestamp desc
-| limit 20
-```
-`event: slow_query`, `sleep_ms: 5000`, `endpoint: /devices` のログを確認。
-
-**[Container Insights]**
-- device-api Pod の CPU が**低いまま**であることを確認
-- **学習ポイント:** CPU は正常なのにレイテンシが悪化 → Container Insights だけでは検知できない。Application Signals の Latency から入り Trace → Logs で原因を特定する流れを体験する
-
----
-
-### 5-3. Error Inject 検証
-
-**想定する障害:** 依存サービスの断続的なエラー・エラーバジェット消費
-
-```bash
-source .env
-# Step 1: カオス画面（${EC2_BASE}/chaos）から「Error Inject ON（30%）」またはAPIで有効化
-curl -X POST "${EC2_BASE}/api/chaos/error-inject?rate=30"
-
-# Step 2: 負荷生成
-./scripts/load.sh error-inject-devices
-
-# Step 3: リセット
-curl -X POST "${EC2_BASE}/api/chaos/reset"
-```
-
-**[Application Signals]**
-1. Services → `device-api` → Fault rate が約30%に上昇
-2. Services → `netwatch-ui` → Fault rate も上昇（エラー伝播）
-
-**[X-Ray Traces]**
-```
-フィルタ: service("device-api") AND fault = true
-```
-- エラートレースを選択
-- Trace Map で赤い span（device-api）を確認
-- span の詳細で `HTTP 500` を確認
-
-**[CloudWatch Logs Insights]**
-```sql
-fields @timestamp, @message
-| filter @message like "error_injected"
-| sort @timestamp desc
-| limit 30
-```
-`event: error_injected`, `error_rate: 30` のログを確認。
-
-**学習ポイント:**
-- `error_injected` ログは device-api に集中するが、netwatch-ui の Fault rate も上昇 → Application Signals で **上流サービスから見た影響** を確認できる
-- Trace を見ることで「どのサービスが起点のエラーか」を特定する手順を体験する
-
----
-
-### 5-4. Alert Storm 検証
-
-**想定する障害:** イベント洪水・モニタリングシステム自体への過負荷
-
-```bash
-source .env
-# Step 1: カオス画面（${EC2_BASE}/chaos）から「Alert Storm 開始」またはAPIで有効化
-curl -X POST "${EC2_BASE}/api/chaos/alert-storm?enable=true"
-
-# Step 2: 負荷生成（Storm 起動後すぐに実行）
-./scripts/load.sh alert-storm-alerts
-
-# Step 3: リセット
-curl -X POST "${EC2_BASE}/api/chaos/reset"
-```
-
-**[Application Signals]**
-1. Services → `alert-api` → Overview タブの RequestCount / Throughput で急増スパイクを確認
-2. Storm は約18秒で完了するため、1分足で見ると目立つスパイクになる
-
-**[CloudWatch Logs Insights — ボリューム急増]**
-```sql
-fields @timestamp, @message
-| filter @message like "alert_storm"
-| stats count(*) by bin(1m)
-```
-1分ごとのログ件数が Storm 中に急増することを確認。
-
-```sql
-fields @timestamp, @message
-| filter @message like "chaos_alert_storm"
-| sort @timestamp asc
-| limit 10
-```
-`chaos_alert_storm_start` → `alert_storm` × 60件 → `chaos_alert_storm_stop` の流れを確認。
-
-**[Container Insights]**
-- Container Insights > EKS Pods > `alert-api`
-- Alert Storm 中に CPU・Memory が一時的に上昇し、Storm 終了後に正常に戻ることを確認
-- Pod 再起動が発生していないことを確認
-
----
-
-### 5-5. 3ホップトレースの確認
-
-**目的:** 分散トレースの親子関係（netwatch-ui → device-api → metrics-collector）を理解する
-
-```bash
-source .env
-./scripts/load.sh normal-device-detail
-```
-
-**X-Ray での確認:**
-1. X-Ray > Traces を開く
-2. フィルタ: `service("netwatch-ui") AND url CONTAINS "/devices/"`
-3. トレースを1件開く → Trace Map で3段のスパンを確認
-4. span 別の duration を確認：どのホップで時間がかかっているか
-
----
-
-## 6. CloudWatch Synthetics 外形監視
-
-### 6-1. Canary の仕様
-
-1本の Canary（`obs-poc-health-check`）が4エンドポイントを順番にチェックします。
-
-| エンドポイント | チェック内容 | 期待ステータス | キーワード |
-|-------------|-----------|-------------|---------|
-| `/` | ダッシュボード表示 | HTTP 200 | `NetWatch` |
-| `/devices` | 機器一覧表示 | HTTP 200 | `devices` |
-| `/devices/TKY-CORE-001` | 機器詳細（3ホップトレース起点） | HTTP 200 | `TKY-CORE-001` |
-| `/alerts` | アラート一覧表示 | HTTP 200 | `alerts` |
-
-- **実行頻度:** rate(5 minutes)（デフォルト停止）
-- **アーティファクト保存:** S3バケット `obs-poc-synthetics-<account_id>`
-
----
-
-### 6-2. Canary 管理手順
-
-```bash
-# 開始（PoC 実施時のみ。コスト節約のため不要時は停止）
-aws synthetics start-canary --name obs-poc-health-check --region ap-northeast-1
-
-# 状態確認
-aws synthetics get-canary \
-  --name obs-poc-health-check --region ap-northeast-1 \
-  --query 'Canary.Status.State'
-
-# 停止（必ず停止してから撤収）
-aws synthetics stop-canary --name obs-poc-health-check --region ap-northeast-1
-
-# 最新実行結果
-aws synthetics get-canary-runs \
-  --name obs-poc-health-check --region ap-northeast-1 \
-  --query 'CanaryRuns[0]'
-```
-
-**コンソール URL:**  
-https://ap-northeast-1.console.aws.amazon.com/cloudwatch/home?region=ap-northeast-1#synthetics:canary/list
-
----
-
-### 6-3. Alarm 設定（Canary 失敗アラート）
-
-```bash
-aws cloudwatch put-metric-alarm \
-  --alarm-name "netwatch-canary-failed" \
-  --metric-name "SuccessPercent" \
-  --namespace "CloudWatchSynthetics" \
-  --dimensions Name=CanaryName,Value=obs-poc-health-check \
-  --statistic Average \
-  --period 300 \
-  --threshold 100 \
-  --comparison-operator LessThanThreshold \
-  --evaluation-periods 1 \
-  --alarm-description "NetWatch Canary FAIL" \
-  --region ap-northeast-1
-```
-
----
-
-### 6-4. シナリオ別の Canary 挙動
-
-| カオス状態 | Canary の挙動 | 学習ポイント |
-|-----------|-------------|-----------|
-| **正常時** | 全エンドポイントが PASS | Availability 100% を確認 |
-| **Slow Query (5秒)** | HTTP 200 → **PASS だが Duration が悪化** | 遅くても死活は PASS → Latency は App Signals で検知 |
-| **Error Inject 30%** | 確率的に FAIL / PASS が混在 | SuccessPercent が 100% 未満に |
-| **Error Inject 50%+** | 高確率で FAIL → Alarm 発火 | Alarm コンソールで ALARM 状態を確認 |
-| **Alert Storm** | `/alerts` は HTTP 200 → **PASS** | アラート洪水は Canary では検知できない |
-
-**重要な学習ポイント:**
-- Slow Query は「HTTP 200 が返る」ので Canary は PASS。**ユーザーが遅さを感じていても Canary は PASS** → Application Signals の Latency メトリクスで検知が必要
-- この組み合わせが「外形監視 + APM」を使う理由
-
----
-
-### 6-5. Synthetics vs Application Signals の使い分け
-
-| 観点 | Synthetics | Application Signals |
-|-----|-----------|-------------------|
-| 視点 | 外部ユーザー視点 | サービス内部視点 |
-| 最初に見る場面 | 問題があるかどうかを確認 | 問題の原因を特定 |
-| Slow Query 検知 | Duration 悪化（PASS） | Latency P99 悪化として明確に検知 |
-| Error Inject 検知 | FAIL（HTTP 500）→ Alarm | Fault rate 上昇・Trace でエラー span 確認 |
-| 主な用途 | 24/365 外形死活・SLA 計測 | 障害のドリルダウン・根本原因特定 |
-
----
-
-## 7. CloudWatch RUM 検証手順
-
-CloudWatch RUM は実装済みです。`.env` に App Monitor ID と Cognito Identity Pool ID を設定して `make ec2-appsignals-enable-rum` を実行するだけで有効化できます。詳細な手順は **[docs/rum-lab.md](rum-lab.md)** を参照してください。
-
----
-
-### 7-1. 有効化手順
+### 5-1. 有効化
 
 ```bash
 # Terraform から値を取得して .env に設定
@@ -671,20 +136,18 @@ terraform -chdir=infra/terraform output cognito_identity_pool_id
 # CW_RUM_IDENTITY_POOL_ID=ap-northeast-1:<UUID>
 # CW_RUM_REGION=ap-northeast-1
 
-# RUM 有効化（netwatch-ui をロールアウト再起動）
+# EC2 App Signals 環境に RUM を有効化
 make ec2-appsignals-enable-rum
 ```
 
 **コンソール URL:**  
 https://ap-northeast-1.console.aws.amazon.com/cloudwatch/home?region=ap-northeast-1#rum:appMonitorList
 
----
+### 5-2. 動作確認
 
-### 7-2. 動作確認
-
-1. ブラウザで `${EC2_BASE}/rum-test` を開く（サイドバーの **RUM Test** リンク）
+1. ブラウザで `http://localhost:8080/rum-test` を開く
 2. ステータスが **ENABLED** / `✓ AwsRumClient 初期化済み` であることを確認
-3. 各ボタンでテレメトリを発生させ、CloudWatch RUM コンソールで確認:
+3. `/rum-test` の各ボタンでテレメトリを発生させる:
 
 | ボタン | RUM コンソールの確認先 |
 |--------|---------------------|
@@ -693,295 +156,279 @@ https://ap-northeast-1.console.aws.amazon.com/cloudwatch/home?region=ap-northeas
 | カスタムイベント | Events タブ |
 | リロード | Performance タブ → Page load steps |
 
----
+### 5-3. 検証シナリオ
 
-### 7-3. RUM で見るべき項目
+**シナリオ A: Slow Query 時の Page load 悪化確認**
+```bash
+source .env
+curl -X POST "${EC2_AS_BASE}/api/chaos/slow-query?enable=true&duration_ms=5000"
+```
+1. ブラウザで `http://localhost:8080/devices` と `/devices/TKY-CORE-001` を開く
+2. RUM > Performance > Page Loads で遅延が反映されているか確認
+3. App Signals の Latency P99 と比較  
+   → **RUM は実ブラウザ時間 / App Signals はサーバー処理時間**（両方の観点が必要な理由）
+```bash
+curl -X POST "${EC2_AS_BASE}/api/chaos/reset"
+```
 
-| 項目 | 場所 | 見るポイント |
-|-----|------|-----------|
-| Page load 時間（ページ別）| RUM > Performance > Page Loads | `/devices/{id}` が遅い → Slow Query の影響が反映されるか |
-| Core Web Vitals | RUM > Performance > Page load steps | LCP / FID / CLS の計測値 |
-| JS Error 件数・内容 | RUM > Errors > JS Errors | `/rum-test` の「JavaScript エラー」ボタンで記録されるか |
-| HTTP Request エラー | RUM > HTTP requests > Status codes | Error Inject 時に HTTP 500 が記録されるか |
-| Session 数 | RUM > Overview | スクリプト実行中のセッション数 |
+**シナリオ B: Error Inject 時の HTTP エラー記録**
+```bash
+source .env
+curl -X POST "${EC2_AS_BASE}/api/chaos/error-inject?rate=30"
+```
+1. ブラウザで `/devices` を数回リロード
+2. RUM > HTTP requests > Status codes で HTTP 500 を確認
+3. App Signals の Fault rate と照合
+```bash
+curl -X POST "${EC2_AS_BASE}/api/chaos/reset"
+```
 
----
-
-### 7-4. 検証シナリオ（RUM）
-
-**シナリオ 1: Slow Query 時の Page load 悪化確認**
-1. Slow Query ON（5秒遅延）
-2. ブラウザで `/devices` と `/devices/TKY-CORE-001` を開く
-3. RUM の Page load 時間グラフで遅延が反映されているか確認
-4. Application Signals の Latency P99 と比較（RUM は実ブラウザ時間 / App Signals はサーバー処理時間）
-
-**シナリオ 2: Error Inject 時の HTTP エラー記録**
-1. Error Inject 30% ON
-2. ブラウザで `/devices` を数回リロード
-3. RUM > HTTP requests > Status codes で HTTP 500 が記録されているか確認
-4. Application Signals の Fault rate と照合
-
-**シナリオ 3: X-Ray との連携確認**
+**シナリオ C: X-Ray との連携確認**
 1. ブラウザで `/devices/TKY-CORE-001` を開く
-2. RUM コンソール > User sessions → セッションを選択
-3. HTTP リクエスト行の「View in X-Ray」リンクをクリック
-4. ブラウザ → netwatch-ui → device-api → metrics-collector の 3 ホップトレースを確認
+2. RUM > User sessions → セッションを選択
+3. HTTP リクエスト行の **View in X-Ray** リンクをクリック
+4. ブラウザ → netwatch-ui → device-api → metrics-collector の3ホップトレースを確認
+
+### 5-4. RUM で見るべき項目
+
+| 項目 | 場所 | PoC での確認ポイント |
+|-----|------|-------------------|
+| Page load 時間（ページ別） | Performance > Page Loads | `/devices/{id}` が Slow Query 時に悪化するか |
+| Core Web Vitals | Performance > Page load steps | LCP / FID / CLS の計測値 |
+| JS Error 件数 | Errors > JS Errors | `/rum-test` ボタンで記録されるか |
+| HTTP Request エラー | HTTP requests > Status codes | Error Inject 時に HTTP 500 が記録されるか |
+| X-Ray 連携 | User sessions → View in X-Ray | ブラウザ起点の分散トレースが確認できるか |
 
 ---
 
-### 7-5. Application Signals との連携
+## 6. カスタムメトリクス検証（EC2 + App Signals）
 
-RUM（ユーザー視点）→ App Signals（サービス視点）→ Traces（リクエスト視点）→ Logs（コード視点）の連携:
+アプリが StatsD プロトコルで送信するメトリクスを CloudWatch Agent（DaemonSet）が受信して CloudWatch Metrics に転送する。
 
-1. **RUM でエラーを確認:** HTTP Errors のタイムスタンプをメモ
-2. **App Signals で照合:** Services → `device-api` → 同じ時刻の Fault rate を確認
-3. **X-Ray Traces で確認:**
-   ```
-   service("device-api") AND fault = true
-   ```
-4. **ログで根本原因確認:**
-   ```sql
-   fields @timestamp, @message
-   | filter @timestamp between <RUMエラー時刻 - 30s> and <RUMエラー時刻 + 30s>
-   | filter @message like "error"
-   | sort @timestamp asc
-   ```
+> **制約:** StatsD は DaemonSet（HostPort 8125）を使用するため **EC2 環境のみ**。Fargate 環境では利用不可。
+
+### 6-1. アーキテクチャ
+
+```
+App Pod
+  → socket.sendto(UDP:8125) → STATSD_HOST (Node IP / Downward API)
+  → CloudWatch Agent DaemonSet（各 EC2 ノード）
+  → CloudWatch Metrics (namespace: NetwatchPoC/Custom)
+```
+
+### 6-2. 有効化
+
+```bash
+make ec2-appsignals-enable-custom-metrics
+make load   # メトリクスを溜める
+```
+
+### 6-3. 実装済みメトリクス一覧
+
+| サービス | メトリクス名 | タイプ | 説明 |
+|---------|------------|--------|------|
+| netwatch-ui | `netwatch.ui.page.dashboard_ms` | timing | ダッシュボード表示レイテンシ |
+| netwatch-ui | `netwatch.ui.page.devices_ms` | timing | 機器一覧表示レイテンシ |
+| netwatch-ui | `netwatch.ui.page.device_detail_ms` | timing | 機器詳細表示レイテンシ |
+| netwatch-ui | `netwatch.ui.page.views` | counter | ページビュー数 |
+| netwatch-ui | `netwatch.ui.error.count` | counter | 500 エラー発生数 |
+| device-api | `netwatch.device.list_ms` | timing | デバイス一覧取得レイテンシ (DB込み) |
+| device-api | `netwatch.device.list_count` | counter | 取得デバイス数 |
+| device-api | `netwatch.device.detail_ms` | timing | デバイス詳細取得レイテンシ |
+| alert-api | `netwatch.alert.list_ms` | timing | アラート一覧取得レイテンシ |
+| alert-api | `netwatch.alert.list_count` | counter | 取得アラート数 |
+
+### 6-4. CloudWatch コンソールで確認
+
+**コンソール URL:**  
+CloudWatch → Metrics → All metrics → Custom namespaces → `NetwatchPoC/Custom`
+
+```bash
+# CLI で確認
+aws cloudwatch list-metrics \
+  --namespace NetwatchPoC/Custom \
+  --region ap-northeast-1
+
+# 特定メトリクスの値を取得（直近10分）
+aws cloudwatch get-metric-statistics \
+  --namespace NetwatchPoC/Custom \
+  --metric-name netwatch.ui.page.views \
+  --statistics Sum \
+  --start-time $(date -u -v-10M +%Y-%m-%dT%H:%M:%SZ) \
+  --end-time $(date -u +%Y-%m-%dT%H:%M:%SZ) \
+  --period 300 \
+  --region ap-northeast-1
+```
+
+### 6-5. 検証シナリオ
+
+**Slow Query との組み合わせ**
+```bash
+source .env
+curl -X POST "${EC2_AS_BASE}/api/chaos/slow-query?enable=true&duration_ms=5000"
+make load
+```
+1. CloudWatch Metrics で `netwatch.device.list_ms` の値が上昇することを確認
+2. App Signals の device-api Latency P99 と比較  
+   → **StatsD メトリクス（アプリ視点）** と **App Signals（OTel 自動計装）** の値がほぼ一致することを確認
+3. **差分の意味:** StatsD はアプリコードで明示的に計測した時間 / App Signals は OTel が自動計装した時間
+
+```bash
+curl -X POST "${EC2_AS_BASE}/api/chaos/reset"
+```
+
+**カスタムメトリクスでアラーム設定**
+```bash
+aws cloudwatch put-metric-alarm \
+  --alarm-name "device-api-slow-query-custom" \
+  --namespace "NetwatchPoC/Custom" \
+  --metric-name "netwatch.device.list_ms" \
+  --statistic Average \
+  --period 60 \
+  --evaluation-periods 2 \
+  --threshold 500 \
+  --comparison-operator GreaterThanThreshold \
+  --alarm-description "device-api DB query latency > 500ms (custom)" \
+  --region ap-northeast-1
+```
 
 ---
 
-## 8. 負荷テストガイド（scripts/load.sh）
+## 7. NR Browser 検証（EC2 + New Relic）
 
-### 使い方
+NR Browser は CloudWatch RUM に相当するサービスで、`NR_BROWSER_SNIPPET` 環境変数（Secret 経由）でスニペットが注入される。
 
-```bash
-source .env   # EC2_BASE を読み込む
+> Fargate + New Relic 環境でも NR Browser は利用可能。Fargate 固有の手順は [lab-eks-fargate-newrelic.md](lab-eks-fargate-newrelic.md) を参照。
 
-# ── 正常時 ──────────────────────────────────────────────────────
-make load                               # 全シナリオ（デフォルト）
-./scripts/load.sh normal-device-detail  # 機器詳細 7件（3ホップトレース生成）
-./scripts/load.sh normal-devices        # 機器一覧（フィルタ各種）
-./scripts/load.sh normal-alerts         # アラート一覧
-./scripts/load.sh normal-dashboard      # ダッシュボードのみ
-./scripts/load.sh mixed-user-flow       # 回遊シナリオ（/ → /devices → /devices/id → /alerts → /chaos）
-
-# ── カオス検証（事前にカオスを ON にしてから実行）────────────────
-./scripts/load.sh slow-query-devices    # Slow Query 検証用
-./scripts/load.sh error-inject-devices  # Error Inject 検証用
-./scripts/load.sh alert-storm-alerts    # Alert Storm 検証用
-```
-
-### 繰り返し回数・間隔の調整
+### 7-1. 前提確認
 
 ```bash
-ROUNDS=10 ./scripts/load.sh normal-device-detail        # 10回繰り返す（デフォルト: 3回）
-DELAY=0.5 ./scripts/load.sh normal-devices              # リクエスト間隔 0.5秒（デフォルト: 1秒）
-ROUNDS=20 DELAY=0.3 ./scripts/load.sh error-inject-devices
+kubectl get secret newrelic-secret -n eks-ec2-newrelic \
+  -o jsonpath='{.data.browser-snippet}' | base64 -d | head -3
 ```
 
-### シナリオ別 主な確認先
+`<script type="text/javascript">` が含まれていれば設定済み。
 
-| シナリオ | 主な確認先 |
-|---------|-----------|
-| `normal-device-detail` | X-Ray > Traces（3ホップ確認）、App Signals > Service Map |
-| `slow-query-devices` | App Signals > device-api > Latency P99 |
-| `error-inject-devices` | App Signals > device-api > Fault rate |
-| `alert-storm-alerts` | CloudWatch Logs > ログボリューム、App Signals > alert-api Throughput |
-| `mixed-user-flow` | App Signals > Service Map 全体 |
+### 7-2. コンソールの確認
 
-### 負荷実行後に見るべき CloudWatch コンソール
+1. `one.newrelic.com` → 左ナビ **Browser**
+2. `netwatch-ui (eks-ec2-newrelic)` を選択
 
-| 確認画面 | コンソール URL |
-|---------|-------------|
-| Application Signals Services | https://ap-northeast-1.console.aws.amazon.com/cloudwatch/home?region=ap-northeast-1#application-signals:services |
-| Service Map | https://ap-northeast-1.console.aws.amazon.com/cloudwatch/home?region=ap-northeast-1#application-signals:map |
-| X-Ray Traces | https://ap-northeast-1.console.aws.amazon.com/cloudwatch/home?region=ap-northeast-1#xray:traces/query |
-| Container Insights | https://ap-northeast-1.console.aws.amazon.com/cloudwatch/home?region=ap-northeast-1#container-insights:performance |
-| Logs Insights | https://ap-northeast-1.console.aws.amazon.com/cloudwatch/home?region=ap-northeast-1#logsV2:logs-insights |
-| Synthetics Canary | https://ap-northeast-1.console.aws.amazon.com/cloudwatch/home?region=ap-northeast-1#synthetics:canary/list |
+| タブ | 確認内容 |
+|------|---------|
+| Summary | Page views・JS errors・Core Web Vitals |
+| Page views | ページ別のロード時間・スループット |
+| Core Web Vitals | LCP / FID / CLS の分布 |
+| JS Errors | JavaScript エラー一覧 |
+| HTTP Errors | 4xx/5xx リクエスト一覧 |
+| Session traces | セッション単位のイベントタイムライン |
 
-### よく使う Logs Insights クエリ
+### 7-3. 検証シナリオ
+
+**シナリオ A: Slow Query 時の Page load 悪化**
+```bash
+source .env
+curl -X POST "${EC2_NR_BASE}/api/chaos/slow-query?enable=true&duration_ms=5000"
+```
+1. ブラウザで `http://localhost:8082/devices` と `/devices/TKY-CORE-001` を開く
+2. NR Browser > Page views でロード時間悪化を確認
+3. APM の Response time P99 と比較
+```bash
+curl -X POST "${EC2_NR_BASE}/api/chaos/reset"
+```
+
+**シナリオ B: Error Inject 時の HTTP エラー記録**
+```bash
+source .env
+curl -X POST "${EC2_NR_BASE}/api/chaos/error-inject?rate=30"
+```
+1. ブラウザで `/devices` を数回リロード
+2. NR Browser > HTTP Errors で HTTP 500 を確認
+3. APM の Error rate と照合
+```bash
+curl -X POST "${EC2_NR_BASE}/api/chaos/reset"
+```
+
+### 7-4. NR Browser vs CloudWatch RUM 比較
+
+| 観点 | NR Browser | CloudWatch RUM |
+|-----|-----------|---------------|
+| 設定方法 | k8s Secret 経由でスニペット注入 | 環境変数 + Cognito Identity Pool |
+| Core Web Vitals | ✅ LCP / FID / CLS | ✅ LCP / FID / CLS |
+| Session traces | ✅ | ✅ |
+| APM との連携 | APM 同一画面から Browser へ移動可 | App Signals → RUM は別途ナビゲート |
+| NRQL でクエリ | ✅ PageView / JavaScriptError テーブル | ❌ CloudWatch Metrics のみ |
+| X-Ray / DT 連携 | ✅ Session traces からトレースへ | ✅ User sessions から X-Ray へ |
+
+---
+
+## 8. カスタムメトリクス検証（EC2 + New Relic / NR Flex）
+
+NR Flex は設定ファイルベースでカスタムメトリクスを収集する仕組みで、DaemonSet の nri-bundle に含まれる。CloudWatch StatsD カスタムメトリクスに相当する。
+
+> **制約:** nri-bundle は DaemonSet のため **EC2 環境のみ**。Fargate 環境では利用不可。
+
+### 8-1. 確認
+
+```bash
+# nri-bundle DaemonSet が動いているか確認
+kubectl get pods -n newrelic -l app.kubernetes.io/name=nri-bundle
+```
+
+### 8-2. NRQL でカスタムメトリクスを確認
 
 ```sql
--- エラーログ集計
-fields @timestamp, @message
-| filter @message like "ERROR"
-| sort @timestamp desc
-| limit 50
+-- Flex で収集したカスタムメトリクス一覧
+SELECT uniques(metricName) FROM Metric
+WHERE instrumentation.name = 'nri-flex'
+SINCE 1 hour ago
 
--- Slow Query 検知
-fields @timestamp, @message
-| filter @message like "slow_query"
-| sort @timestamp desc
-
--- サービス別ログ件数（Alert Storm 確認）
-fields @timestamp, @message
-| stats count(*) as cnt by bin(1m)
-| sort @timestamp asc
-
--- trace_id でのログ絞り込み（X-Ray トレースと突き合わせ）
-fields @timestamp, @message
-| filter @message like "1-xxxxxxxx-xxxxxxxxxxxxxxxxxxxx"
+-- device-api のカスタムレイテンシ
+SELECT average(netwatch.device.list_ms) FROM Metric
+WHERE clusterName = 'obs-poc'
+SINCE 30 minutes ago TIMESERIES 1 minute
 ```
 
-> **ヒント:** X-Ray でトレースを見つけたら trace_id をコピーして上記クエリで実行すると、そのトレースに対応するアプリログを即座に特定できます。
+### 8-3. StatsD（CloudWatch）vs NR Flex 比較
+
+| 観点 | CloudWatch StatsD | NR Flex |
+|-----|-----------------|---------|
+| 収集方式 | App → UDP 8125 → CW Agent | Flex 設定で HTTP エンドポイントをポーリング |
+| コード変更 | アプリに `socket.sendto` を追加 | Flex YAML で設定、アプリ変更不要 |
+| クエリ | CloudWatch Metrics + Alarms | NRQL（SQL ライクで自由度高） |
+| Fargate 対応 | ❌ | ❌ |
 
 ---
 
-## 9. 設計チェックリスト
+## 9. 環境別 利用可能機能まとめ
 
-以下の全項目を確認し、このPoC で体験できたことをチェックする。
+| 機能 | EC2 + App Signals | EC2 + NR | Fargate + App Signals | Fargate + NR |
+|-----|:----------------:|:--------:|:---------------------:|:------------:|
+| APM / 分散トレース | ✅ | ✅ | ✅ | ✅ |
+| サービスマップ | ✅ | ✅ | ✅ | ✅ |
+| SLO 管理 | ✅ | ✅ | ✅ | ✅ |
+| エラー自動グルーピング | — | ✅ Errors Inbox | — | ✅ Errors Inbox |
+| 遅いTX自動キャプチャ | — | ✅ Transaction Traces | — | ✅ Transaction Traces |
+| コンテナ監視（ノード） | ✅ Container Insights | ✅ K8s Explorer | ❌ | ❌ |
+| コンテナ監視（Pod） | ✅ Container Insights | ✅ K8s Explorer | ✅（Pod のみ） | ❌ |
+| ログ | ✅ CloudWatch Logs | ✅ NR Logs | ✅ CloudWatch Logs | ❌ |
+| Logs in Context | 2ステップ（trace_id手動） | ✅ 1クリック | 2ステップ | ❌ |
+| ブラウザ監視 | ✅ CloudWatch RUM | ✅ NR Browser | ✅（手動設定） | ✅ NR Browser |
+| カスタムメトリクス | ✅ StatsD | ✅ NR Flex | ❌ | ❌ |
+| 外形監視 | ✅ Synthetics | ✅ Synthetics（共通） | ✅ Synthetics（共通） | ✅ Synthetics（共通） |
+| NRQL / 任意クエリ | — | ✅ | — | ✅ |
+| アラート条件の柔軟性 | CW Alarms（ディメンション固定） | NRQL（任意条件） | CW Alarms | NRQL（任意条件） |
 
-### APM（Application Signals）
+### 環境選択の判断フロー
 
-- [ ] 4サービスが Application Signals に自動登録されている（netwatch-ui, device-api, metrics-collector, alert-api）
-- [ ] Service Map で3段の依存グラフ（netwatch-ui → device-api → metrics-collector）が表示される
-- [ ] Service Map で2段の依存グラフ（netwatch-ui → alert-api）が表示される
-- [ ] 各サービスの P50 / P90 / P99 Latency がオペレーション別に確認できる
-- [ ] 正常時に Error rate / Fault rate が 0% であることを確認した
-- [ ] Slow Query 時に device-api Latency P99 が 5000ms 以上になることを確認した
-- [ ] Error Inject 時に device-api Fault rate が設定値に比例することを確認した
-- [ ] エラーが netwatch-ui 側にも伝播（Fault rate 上昇）することを確認した
-
-### 分散トレース（X-Ray）
-
-- [ ] 3ホップトレース（netwatch-ui → device-api → metrics-collector）のトレースマップを確認した
-- [ ] Slow Query 時に device-api span が長くなることをトレースマップで確認した
-- [ ] Error Inject 時にエラー span が赤くなることを確認した
-- [ ] トレースフィルタ（`service()`, `fault = true`, `duration > N`）を使った絞り込みを試した
-
-### インフラ・コンテナ（Container Insights）
-
-- [ ] EKS Cluster 全体の CPU / Memory 使用率を確認した
-- [ ] Pod 別の CPU / Memory 使用率を確認した
-- [ ] Slow Query 時に device-api Pod の CPU が上がらないこと（I/O待ち）を確認した
-- [ ] Pod の再起動回数が 0 であることを確認した
-
-### ログ（CloudWatch Logs）
-
-- [ ] `/obs-poc/demo-ec2/application` で構造化 JSON ログを確認した
-- [ ] Logs Insights で `event: slow_query` を検索できた
-- [ ] Logs Insights で `event: error_injected` を検索できた
-- [ ] Logs Insights で `event: alert_storm` を検索できた
-
-### 外形監視（Synthetics）
-
-- [ ] Canary を起動して正常時の PASS を確認した
-- [ ] Error Inject 時に Canary が FAIL になることを確認した
-- [ ] Slow Query 時に Canary は PASS だが Duration が悪化することを確認した（外形監視の限界）
-- [ ] Canary を停止した（課金防止）
-
-### CloudWatch RUM
-
-- [ ] `make ec2-appsignals-enable-rum` で RUM を有効化した
-- [ ] `/rum-test` ページで `✓ AwsRumClient 初期化済み` を確認した
-- [ ] JS エラー / HTTP エラー / カスタムイベントを発生させ RUM コンソールで記録を確認した
-- [ ] Slow Query シナリオで RUM の Page load 時間悪化と App Signals Latency P99 を比較した
-- [ ] User sessions → View in X-Ray で RUM から X-Ray トレースへのリンクを確認した
-
----
-
-## 10. Alarm / SLO 設計イメージ
-
-### Application Signals SLO 設定例
-
-Application Signals のコンソール（Services → 対象サービス → Create SLO）から設定可能。
-
-#### SLO 例 1: netwatch-ui 可用性 SLO 99.9%
-
-| 項目 | 設定値 |
-|-----|------|
-| SLO 名 | `netwatch-ui-availability-slo` |
-| SLI タイプ | Availability |
-| 対象サービス | `netwatch-ui` |
-| 目標 | 99.9% |
-| 期間 | 30日間のローリングウィンドウ |
-| エラーバジェット | 43.2分/30日 |
-
-#### SLO 例 2: device-api Latency P99 < 2000ms
-
-| 項目 | 設定値 |
-|-----|------|
-| SLO 名 | `device-api-latency-slo` |
-| SLI タイプ | Latency |
-| 対象サービス | `device-api` |
-| 目標レイテンシ | 2000ms 以下 |
-| 目標達成率 | 99% |
-| 期間 | 7日間のローリングウィンドウ |
-
-> **注:** Slow Query シナリオを実行すると device-api Latency SLO はすぐにエラーバジェットを消費する。これが「カオスエンジニアリングが SLO に与える影響」の体験になる。
-
----
-
-### CloudWatch Alarm 設計例
-
-#### Alarm 例 1: device-api Fault rate > 5%
-
-```bash
-aws cloudwatch put-metric-alarm \
-  --alarm-name "obs-poc-device-api-fault-rate" \
-  --alarm-description "device-api Fault rate > 5%" \
-  --namespace "ApplicationSignals/OperationMetrics" \
-  --metric-name "Fault" \
-  --dimensions Name=Service,Value=device-api Name=Environment,Value=demo-ec2 \
-  --statistic Sum \
-  --period 60 \
-  --evaluation-periods 2 \
-  --threshold 5 \
-  --comparison-operator GreaterThanThreshold \
-  --region ap-northeast-1
 ```
-
-#### Alarm 例 2: Canary 失敗アラート
-
-```bash
-aws cloudwatch put-metric-alarm \
-  --alarm-name "obs-poc-canary-failed" \
-  --alarm-description "Synthetics canary FAIL" \
-  --namespace "CloudWatchSynthetics" \
-  --metric-name "SuccessPercent" \
-  --dimensions Name=CanaryName,Value=obs-poc-health-check \
-  --statistic Average \
-  --period 300 \
-  --evaluation-periods 1 \
-  --threshold 100 \
-  --comparison-operator LessThanThreshold \
-  --region ap-northeast-1
-```
-
-#### Alarm 例 3: device-api Latency P99 > 3000ms
-
-```bash
-aws cloudwatch put-metric-alarm \
-  --alarm-name "obs-poc-device-api-high-latency" \
-  --alarm-description "device-api Latency P99 > 3000ms" \
-  --namespace "ApplicationSignals/OperationMetrics" \
-  --metric-name "Latency" \
-  --dimensions Name=Service,Value=device-api Name=Environment,Value=demo-ec2 \
-  --extended-statistic p99 \
-  --period 60 \
-  --evaluation-periods 2 \
-  --threshold 3000 \
-  --comparison-operator GreaterThanThreshold \
-  --region ap-northeast-1
-```
-
-#### Alarm 例 4: Pod 再起動検知
-
-```bash
-aws cloudwatch put-metric-alarm \
-  --alarm-name "obs-poc-pod-restart" \
-  --alarm-description "Pod restart detected in demo-ec2" \
-  --namespace "ContainerInsights" \
-  --metric-name "pod_number_of_container_restarts" \
-  --dimensions Name=ClusterName,Value=obs-poc Name=Namespace,Value=demo-ec2 \
-  --statistic Sum \
-  --period 60 \
-  --evaluation-periods 1 \
-  --threshold 0 \
-  --comparison-operator GreaterThanThreshold \
-  --region ap-northeast-1
+Fargate 採用を検討している？
+  ├─ YES → App Signals が主オプション（インフラ + ログ + APM 全対応）
+  │         New Relic は APM のみ（インフラ・ログは CW 側で補完が必要）
+  └─ NO（EC2）→ 両ツールがフル機能で比較検証可能
+                 APM の操作性・ログ連携・エラー分析を4環境横断で比較する
 ```
 
 ---
 
-*このガイドは obs-poc PoC 専用の検証手順書です。本番環境への適用前に各設定値・閾値を環境に合わせて調整してください。*
+*各環境の詳細なハンズオン手順・チェックリスト・Alarm/SLO 設計例は各ラボファイルを参照してください。*

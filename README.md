@@ -63,9 +63,11 @@
 |-------------|------|
 | [`docs/setup.md`](docs/setup.md) | セットアップ・デプロイ手順（全4環境） |
 | [`docs/environment-comparison.md`](docs/environment-comparison.md) | 4環境の構成・機能差・比較表 |
-| [`docs/observability-lab.md`](docs/observability-lab.md) | CloudWatch ハンズオン検証ガイド |
-| [`docs/rum-lab.md`](docs/rum-lab.md) | CloudWatch RUM ブラウザ監視ハンズオン |
-| [`docs/custom-metrics-lab.md`](docs/custom-metrics-lab.md) | StatsD カスタムメトリクスハンズオン |
+| [`docs/observability-lab.md`](docs/observability-lab.md) | 全環境ラボ入口ガイド（RUM・カスタムメトリクス含む） |
+| [`docs/lab-eks-ec2-appsignals.md`](docs/lab-eks-ec2-appsignals.md) | ハンズオン — EKS on EC2 + App Signals |
+| [`docs/lab-eks-ec2-newrelic.md`](docs/lab-eks-ec2-newrelic.md) | ハンズオン — EKS on EC2 + New Relic |
+| [`docs/lab-eks-fargate-appsignals.md`](docs/lab-eks-fargate-appsignals.md) | ハンズオン — EKS on Fargate + App Signals |
+| [`docs/lab-eks-fargate-newrelic.md`](docs/lab-eks-fargate-newrelic.md) | ハンズオン — EKS on Fargate + New Relic（APM only） |
 | [`docs/runbook.md`](docs/runbook.md) | 障害対応 Runbook・コマンド集 |
 
 ```bash
