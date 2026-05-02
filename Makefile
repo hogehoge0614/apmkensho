@@ -338,13 +338,17 @@ down:
 	@helm uninstall nri-bundle -n newrelic 2>/dev/null || true
 
 	@echo ""
-	@echo "==> [3/5] Deleting Kubernetes namespaces..."
-	@kubectl delete namespace eks-ec2-appsignals    --timeout=60s 2>/dev/null || true
-	@kubectl delete namespace eks-fargate-appsignals --timeout=60s 2>/dev/null || true
-	@kubectl delete namespace eks-ec2-newrelic       --timeout=60s 2>/dev/null || true
-	@kubectl delete namespace eks-fargate-newrelic   --timeout=60s 2>/dev/null || true
-	@kubectl delete namespace newrelic               --timeout=60s 2>/dev/null || true
-	@kubectl delete namespace aws-observability      --timeout=60s 2>/dev/null || true
+	@echo "==> [3/5] Deleting Kubernetes namespaces (triggers ELB deletion)..."
+	@kubectl delete namespace eks-ec2-appsignals     --timeout=30s 2>/dev/null || true
+	@kubectl delete namespace eks-fargate-appsignals --timeout=30s 2>/dev/null || true
+	@kubectl delete namespace eks-ec2-newrelic        --timeout=30s 2>/dev/null || true
+	@kubectl delete namespace eks-fargate-newrelic    --timeout=30s 2>/dev/null || true
+	@kubectl delete namespace newrelic                --timeout=30s 2>/dev/null || true
+	@kubectl delete namespace aws-observability       --timeout=30s 2>/dev/null || true
+	@echo "  Waiting for ELBs to be deregistered before VPC is deleted..."
+	@for ns in eks-ec2-appsignals eks-fargate-appsignals eks-ec2-newrelic eks-fargate-newrelic; do \
+		kubectl wait --for=delete namespace/$$ns --timeout=180s 2>/dev/null || true; \
+	done
 
 	@echo ""
 	@echo "==> [4/5] Running Terraform destroy..."

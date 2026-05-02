@@ -13,13 +13,30 @@ resource "aws_cloudwatch_log_group" "container_insights" {
   retention_in_days = 1
 }
 
+# Fluent Bit DaemonSet (amazon-cloudwatch-observability addon) creates these at runtime.
+# Pre-creating here ensures retention=1 and terraform destroy deletes them.
+resource "aws_cloudwatch_log_group" "container_insights_application" {
+  name              = "/aws/containerinsights/${var.cluster_name}/application"
+  retention_in_days = 1
+}
+
+resource "aws_cloudwatch_log_group" "container_insights_dataplane" {
+  name              = "/aws/containerinsights/${var.cluster_name}/dataplane"
+  retention_in_days = 1
+}
+
+resource "aws_cloudwatch_log_group" "container_insights_host" {
+  name              = "/aws/containerinsights/${var.cluster_name}/host"
+  retention_in_days = 1
+}
+
 resource "aws_cloudwatch_log_group" "app_ec2" {
-  name              = "/obs-poc/demo-ec2/application"
+  name              = "/obs-poc/eks-ec2-appsignals/application"
   retention_in_days = 1
 }
 
 resource "aws_cloudwatch_log_group" "app_fargate" {
-  name              = "/obs-poc/demo-fargate/application"
+  name              = "/obs-poc/eks-fargate-appsignals/application"
   retention_in_days = 1
 }
 
@@ -64,7 +81,7 @@ resource "aws_cloudwatch_dashboard" "obs_poc" {
           view   = "timeSeries"
           region = var.aws_region
           metrics = [
-            ["ApplicationSignals/OperationMetrics", "Latency", "Environment", "demo-ec2", "Service", "netwatch-ui", { "stat" : "p99" }],
+            ["ApplicationSignals/OperationMetrics", "Latency", "Environment", "eks-ec2-appsignals", "Service", "netwatch-ui", { "stat" : "p99" }],
             [".", ".", ".", ".", "Service", "alert-api", { "stat" : "p99" }],
             [".", ".", ".", ".", "Service", "device-api", { "stat" : "p99" }],
             [".", ".", ".", ".", "Service", "metrics-collector", { "stat" : "p99" }]
@@ -83,7 +100,7 @@ resource "aws_cloudwatch_dashboard" "obs_poc" {
           view   = "timeSeries"
           region = var.aws_region
           metrics = [
-            ["ApplicationSignals/OperationMetrics", "Latency", "Environment", "demo-fargate", "Service", "netwatch-ui", { "stat" : "p99" }],
+            ["ApplicationSignals/OperationMetrics", "Latency", "Environment", "eks-fargate-appsignals", "Service", "netwatch-ui", { "stat" : "p99" }],
             [".", ".", ".", ".", "Service", "alert-api", { "stat" : "p99" }],
             [".", ".", ".", ".", "Service", "device-api", { "stat" : "p99" }],
             [".", ".", ".", ".", "Service", "metrics-collector", { "stat" : "p99" }]
@@ -102,7 +119,7 @@ resource "aws_cloudwatch_dashboard" "obs_poc" {
           view   = "timeSeries"
           region = var.aws_region
           metrics = [
-            ["ApplicationSignals/OperationMetrics", "Error", "Environment", "demo-ec2", "Service", "netwatch-ui"],
+            ["ApplicationSignals/OperationMetrics", "Error", "Environment", "eks-ec2-appsignals", "Service", "netwatch-ui"],
             [".", ".", ".", ".", "Service", "metrics-collector"],
             [".", ".", ".", ".", "Service", "device-api"]
           ]
@@ -120,7 +137,7 @@ resource "aws_cloudwatch_dashboard" "obs_poc" {
           view   = "timeSeries"
           region = var.aws_region
           metrics = [
-            ["ApplicationSignals/OperationMetrics", "Error", "Environment", "demo-fargate", "Service", "netwatch-ui"],
+            ["ApplicationSignals/OperationMetrics", "Error", "Environment", "eks-fargate-appsignals", "Service", "netwatch-ui"],
             [".", ".", ".", ".", "Service", "metrics-collector"],
             [".", ".", ".", ".", "Service", "device-api"]
           ]
@@ -138,7 +155,7 @@ resource "aws_cloudwatch_dashboard" "obs_poc" {
           view   = "timeSeries"
           region = var.aws_region
           metrics = [
-            ["ContainerInsights", "pod_cpu_utilization", "ClusterName", var.cluster_name, "Namespace", "demo-ec2"]
+            ["ContainerInsights", "pod_cpu_utilization", "ClusterName", var.cluster_name, "Namespace", "eks-ec2-appsignals"]
           ]
         }
       },
@@ -154,7 +171,7 @@ resource "aws_cloudwatch_dashboard" "obs_poc" {
           view   = "timeSeries"
           region = var.aws_region
           metrics = [
-            ["ContainerInsights", "pod_memory_utilization", "ClusterName", var.cluster_name, "Namespace", "demo-fargate"]
+            ["ContainerInsights", "pod_memory_utilization", "ClusterName", var.cluster_name, "Namespace", "eks-fargate-appsignals"]
           ]
         }
       },
@@ -198,7 +215,7 @@ resource "aws_cloudwatch_metric_alarm" "high_latency_ec2" {
   treat_missing_data  = "notBreaching"
 
   dimensions = {
-    Environment = "demo-ec2"
+    Environment = "eks-ec2-appsignals"
   }
 }
 
@@ -216,7 +233,7 @@ resource "aws_cloudwatch_metric_alarm" "high_error_rate_ec2" {
   treat_missing_data  = "notBreaching"
 
   dimensions = {
-    Environment = "demo-ec2"
+    Environment = "eks-ec2-appsignals"
   }
 }
 
@@ -234,7 +251,7 @@ resource "aws_cloudwatch_metric_alarm" "high_latency_fargate" {
   treat_missing_data  = "notBreaching"
 
   dimensions = {
-    Environment = "demo-fargate"
+    Environment = "eks-fargate-appsignals"
   }
 }
 
@@ -252,7 +269,7 @@ resource "aws_cloudwatch_metric_alarm" "high_error_rate_fargate" {
   treat_missing_data  = "notBreaching"
 
   dimensions = {
-    Environment = "demo-fargate"
+    Environment = "eks-fargate-appsignals"
   }
 }
 
@@ -271,6 +288,6 @@ resource "aws_cloudwatch_metric_alarm" "pod_cpu_ec2" {
 
   dimensions = {
     ClusterName = var.cluster_name
-    Namespace   = "demo-ec2"
+    Namespace   = "eks-ec2-appsignals"
   }
 }

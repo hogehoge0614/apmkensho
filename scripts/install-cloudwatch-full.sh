@@ -37,7 +37,7 @@ echo ""
 echo "==> [3/5] Annotating namespaces for OTel Python auto-instrumentation..."
 # The CloudWatch Observability addon's OTel Operator reads this annotation
 # and injects the Python SDK as an init container — no app code change needed
-for ns in demo-ec2 demo-fargate; do
+for ns in eks-ec2-appsignals eks-fargate-appsignals; do
   kubectl annotate namespace "${ns}" \
     "instrumentation.opentelemetry.io/inject-python=true" \
     --overwrite 2>/dev/null || true
@@ -69,8 +69,8 @@ echo "   → CloudWatch Application Signals (APM + Service Map + SLOs)"
 echo "   → X-Ray (distributed tracing)"
 echo ""
 echo " Next steps:"
-echo "   make deploy-ec2             # Deploy apps to demo-ec2 (EC2 nodes)"
-echo "   make deploy-fargate         # Deploy apps to demo-fargate (Fargate)"
+echo "   make ec2-appsignals-deploy      # Deploy apps to eks-ec2-appsignals"
+echo "   make fargate-appsignals-deploy  # Deploy apps to eks-fargate-appsignals"
 echo "   make port-forward-ec2       # http://localhost:8080"
 echo "   make load                   # Generate traces"
 echo ""
