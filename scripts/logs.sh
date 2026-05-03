@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-NAMESPACE="${1:-demo-ec2}"
+NAMESPACE="${1:-eks-ec2-appsignals}"
 SERVICE="${2:-netwatch-ui}"
 TAIL="${3:-50}"
 

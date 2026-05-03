@@ -53,7 +53,7 @@ resource "aws_synthetics_canary" "poc_health" {
   s3_bucket            = aws_s3_bucket.synthetics.id
   s3_key               = aws_s3_object.canary_script.key
   runtime_version      = "syn-python-selenium-10.0"
-  start_canary         = false  # Start manually during PoC to avoid charges
+  start_canary         = false # Start manually during PoC to avoid charges
 
   schedule {
     expression = "rate(5 minutes)"

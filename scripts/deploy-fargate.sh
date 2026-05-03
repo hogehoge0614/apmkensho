@@ -86,6 +86,9 @@ for manifest in "${ROOT_DIR}/k8s/eks-fargate-appsignals/"*.yaml; do
   echo "  Applying: $(basename ${manifest})"
   sed \
     -e "s|\${ECR_REGISTRY}|${ECR_REGISTRY}|g" \
+    -e "s|\${APP_SIGNALS_FARGATE_ROLE_ARN}|${APP_SIGNALS_FARGATE_ROLE_ARN}|g" \
+    -e "s|\${AWS_REGION}|${AWS_REGION}|g" \
+    -e "s|\${CLUSTER_NAME}|${CLUSTER_NAME}|g" \
     -e "s|\${CW_RUM_APP_MONITOR_ID}|${CW_RUM_APP_MONITOR_ID:-}|g" \
     -e "s|\${CW_RUM_IDENTITY_POOL_ID}|${CW_RUM_IDENTITY_POOL_ID:-}|g" \
     -e "s|\${CW_RUM_REGION}|${CW_RUM_REGION:-ap-northeast-1}|g" \
@@ -114,4 +117,4 @@ else
 fi
 echo ""
 echo "NOTE: Fargate — CloudWatch Agent DaemonSet does not run on virtual nodes."
-echo "      OTel SDK sends traces to cloudwatch-agent Service in amazon-cloudwatch namespace."
+echo "      OTel SDK sends traces to the namespace-local adot-collector Deployment."

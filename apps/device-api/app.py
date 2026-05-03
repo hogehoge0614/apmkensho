@@ -21,7 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pythonjsonlogger import jsonlogger
 
 SERVICE = os.getenv("SERVICE_NAME", "device-api")
-ENVIRONMENT = os.getenv("ENVIRONMENT", "demo-ec2")
+ENVIRONMENT = os.getenv("ENVIRONMENT", "eks-ec2-appsignals")
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 METRICS_COLLECTOR_URL = os.getenv("METRICS_COLLECTOR_URL", "http://metrics-collector:8000")
 

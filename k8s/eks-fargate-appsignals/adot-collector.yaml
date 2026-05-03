@@ -1,0 +1,50 @@
+---
+# CloudWatch Agent for Fargate — Deployment mode (DaemonSet not supported on Fargate)
+# The AmazonCloudWatchAgent CR (cloudwatch.aws.amazon.com/v1alpha1) with mode=deployment
+# lets the CW Observability Operator create a Deployment + Service in this namespace.
+# App pods send OTLP to adot-collector:4316 (Service created by the operator).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: adot-collector-sa
+  namespace: eks-fargate-appsignals
+  annotations:
+    eks.amazonaws.com/role-arn: "${APP_SIGNALS_FARGATE_ROLE_ARN}"
+---
+apiVersion: cloudwatch.aws.amazon.com/v1alpha1
+kind: AmazonCloudWatchAgent
+metadata:
+  name: adot-collector
+  namespace: eks-fargate-appsignals
+spec:
+  mode: deployment
+  replicas: 1
+  serviceAccount: adot-collector-sa
+  image: "${ECR_REGISTRY}/obs-poc/adot-collector:latest"
+  config: '{"agent":{"region":"${AWS_REGION}"},"logs":{"metrics_collected":{"application_signals":{"hosted_in":"${CLUSTER_NAME}"}}},"traces":{"traces_collected":{"application_signals":{}}}}'
+  env:
+    - name: K8S_NAMESPACE
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.namespace
+    - name: K8S_CLUSTER_NAME
+      value: "${CLUSTER_NAME}"
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+---
+# Namespace-scoped Instrumentation CR — overrides the global cluster CR
+# so Fargate pods send OTLP to the local CloudWatch Agent Deployment (adot-collector service).
+# Only exporter.endpoint is overridden; the operator injects App Signals env vars by default.
+apiVersion: cloudwatch.aws.amazon.com/v1alpha1
+kind: Instrumentation
+metadata:
+  name: appsignals-fargate
+  namespace: eks-fargate-appsignals
+spec:
+  exporter:
+    endpoint: http://adot-collector:4316

@@ -26,6 +26,7 @@ SCRIPTS_DIR := scripts
         ec2-appsignals-deploy ec2-appsignals-verify ec2-appsignals-down \
         ec2-appsignals-enable-rum ec2-appsignals-enable-custom-metrics \
         fargate-appsignals-deploy fargate-appsignals-verify fargate-appsignals-down \
+        fargate-appsignals-enable-rum \
         ec2-newrelic-deploy ec2-newrelic-verify ec2-newrelic-down \
         fargate-newrelic-deploy fargate-newrelic-verify fargate-newrelic-down \
         install-cloudwatch-full install-newrelic-full \
@@ -74,6 +75,7 @@ help:
 	@echo "    make install-cloudwatch-full  # shared with EC2"
 	@echo "    make fargate-appsignals-deploy"
 	@echo "    make fargate-appsignals-verify"
+	@echo "    make fargate-appsignals-enable-rum"
 	@echo "    make fargate-appsignals-down"
 	@echo ""
 	@echo "  ── EKS on EC2 + New Relic (eks-ec2-newrelic) ──────────────────────────"
@@ -104,6 +106,7 @@ help:
 	@echo "    make port-forward-newrelic                # http://localhost:8082"
 	@echo "    make port-forward-fargate-newrelic        # http://localhost:8083"
 	@echo "    make compare-check                        # comparison guide"
+	@echo "    make tf-apply                             # apply Terraform changes to existing infra"
 	@echo "    make down                                 # destroy all resources"
 	@echo ""
 
@@ -194,7 +197,7 @@ ec2-appsignals-verify:
 	@echo "  https://$(AWS_REGION).console.aws.amazon.com/cloudwatch/home?region=$(AWS_REGION)#application-signals:services"
 
 ec2-appsignals-enable-rum:
-	@$(SCRIPTS_DIR)/enable-rum.sh
+	@$(SCRIPTS_DIR)/enable-rum.sh eks-ec2-appsignals
 
 ec2-appsignals-enable-custom-metrics:
 	@$(SCRIPTS_DIR)/enable-custom-metrics.sh
@@ -218,6 +221,9 @@ fargate-appsignals-verify:
 	@echo ""
 	@echo "--- Services ---"
 	@kubectl get svc -n eks-fargate-appsignals
+
+fargate-appsignals-enable-rum:
+	@$(SCRIPTS_DIR)/enable-rum.sh eks-fargate-appsignals
 
 fargate-appsignals-down:
 	@echo "==> Deleting eks-fargate-appsignals namespace..."

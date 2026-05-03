@@ -50,12 +50,12 @@ resource "aws_db_instance" "netwatch" {
   db_subnet_group_name   = aws_db_subnet_group.netwatch.name
   vpc_security_group_ids = [aws_security_group.rds.id]
 
-  multi_az               = false
-  publicly_accessible    = false
-  storage_encrypted      = false
-  skip_final_snapshot    = true
-  deletion_protection    = false
-  apply_immediately      = true
+  multi_az            = false
+  publicly_accessible = false
+  storage_encrypted   = false
+  skip_final_snapshot = true
+  deletion_protection = false
+  apply_immediately   = true
 
   tags = {
     Name = "${var.cluster_name}-netwatch"

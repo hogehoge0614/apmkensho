@@ -12,6 +12,8 @@ AWS_REGION="${AWS_REGION:-ap-northeast-1}"
 AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-$(aws sts get-caller-identity --query Account --output text)}"
 ECR_REGISTRY="${ECR_REGISTRY:-${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com}"
 NS="eks-fargate-newrelic"
+APP_SIGNALS_EC2_ROLE_ARN=$(cd "${ROOT_DIR}/infra/terraform" && terraform output -raw app_signals_ec2_role_arn 2>/dev/null || echo "")
+APP_SIGNALS_FARGATE_ROLE_ARN=$(cd "${ROOT_DIR}/infra/terraform" && terraform output -raw app_signals_fargate_role_arn 2>/dev/null || echo "")
 
 echo "============================================================"
 echo " EKS on Fargate + New Relic (APM traces only)"
@@ -21,7 +23,10 @@ echo "============================================================"
 echo ""
 
 echo "==> Creating namespaces and ServiceAccounts..."
-kubectl apply -f "${ROOT_DIR}/k8s/namespaces.yaml"
+sed \
+  -e "s|\${APP_SIGNALS_EC2_ROLE_ARN}|${APP_SIGNALS_EC2_ROLE_ARN}|g" \
+  -e "s|\${APP_SIGNALS_FARGATE_ROLE_ARN}|${APP_SIGNALS_FARGATE_ROLE_ARN}|g" \
+  "${ROOT_DIR}/k8s/namespaces.yaml" | kubectl apply -f -
 
 echo "==> Creating database secret (device-api-db) for ${NS}..."
 RDS_ENDPOINT=$(cd "${ROOT_DIR}/infra/terraform" && terraform output -raw rds_endpoint 2>/dev/null || echo "")
@@ -39,11 +44,23 @@ else
 fi
 
 echo ""
-echo "==> Copying New Relic license key secret to ${NS} namespace..."
-kubectl get secret newrelic-secret -n eks-ec2-newrelic -o yaml 2>/dev/null \
-  | sed "s/namespace: eks-ec2-newrelic/namespace: ${NS}/" \
-  | kubectl apply -f - \
-  || echo "  [WARN] newrelic-secret not found in eks-ec2-newrelic — run 'make install-newrelic-full' first"
+echo "==> Creating New Relic license key secret in ${NS} namespace..."
+if [ -z "${NEW_RELIC_LICENSE_KEY:-}" ] || [ "${NEW_RELIC_LICENSE_KEY:-}" = "your_license_key_here" ]; then
+  echo "  [WARN] NEW_RELIC_LICENSE_KEY not set in .env — NR agent injection will not report data"
+else
+  args=(
+    "--namespace" "${NS}"
+    "--from-literal=license-key=${NEW_RELIC_LICENSE_KEY}"
+    "--from-literal=account-id=${NEW_RELIC_ACCOUNT_ID:-}"
+    "--from-literal=api-key=${NEW_RELIC_API_KEY:-}"
+  )
+  if [ -n "${NR_BROWSER_SNIPPET:-}" ]; then
+    args+=("--from-literal=browser-snippet=${NR_BROWSER_SNIPPET}")
+  fi
+  kubectl create secret generic newrelic-secret "${args[@]}" \
+    --dry-run=client -o yaml | kubectl apply -f -
+  echo "  Secret newrelic-secret created/updated."
+fi
 
 echo ""
 echo "==> Applying New Relic Instrumentation CRs..."

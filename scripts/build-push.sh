@@ -39,5 +39,14 @@ for svc in "${SERVICES[@]}"; do
 done
 
 echo ""
+echo "==> Mirroring ADOT Collector image to private ECR (for Fargate access via ECR VPC endpoint)..."
+ADOT_SRC="public.ecr.aws/aws-observability/aws-otel-collector:latest"
+ADOT_DST="${ECR_REGISTRY}/${CLUSTER_NAME}/adot-collector:latest"
+docker pull --platform linux/amd64 "${ADOT_SRC}"
+docker tag "${ADOT_SRC}" "${ADOT_DST}"
+docker push "${ADOT_DST}"
+echo "    Pushed: ${ADOT_DST}"
+
+echo ""
 echo "All images pushed successfully."
 echo "ECR_REGISTRY=${ECR_REGISTRY}"

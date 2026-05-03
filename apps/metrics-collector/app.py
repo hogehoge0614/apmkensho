@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pythonjsonlogger import jsonlogger
 
 SERVICE = os.getenv("SERVICE_NAME", "metrics-collector")
-ENVIRONMENT = os.getenv("ENVIRONMENT", "demo-ec2")
+ENVIRONMENT = os.getenv("ENVIRONMENT", "eks-ec2-appsignals")
 
 logger = logging.getLogger(SERVICE)
 _h = logging.StreamHandler()

@@ -13,6 +13,11 @@ CLUSTER_NAME="${CLUSTER_NAME:-obs-poc}"
 NR_LICENSE_KEY="${NEW_RELIC_LICENSE_KEY:?NEW_RELIC_LICENSE_KEY must be set}"
 NR_ACCOUNT_ID="${NEW_RELIC_ACCOUNT_ID:?NEW_RELIC_ACCOUNT_ID must be set}"
 
+if [ "${NR_LICENSE_KEY}" = "your_license_key_here" ] || [ "${NR_ACCOUNT_ID}" = "your_account_id_here" ]; then
+  echo "[ERROR] Set NEW_RELIC_LICENSE_KEY and NEW_RELIC_ACCOUNT_ID in .env before installing New Relic."
+  exit 1
+fi
+
 echo "======================================================================"
 echo " Installing New Relic Full Stack"
 echo ""
@@ -29,7 +34,8 @@ helm repo update
 echo ""
 echo "==> [2/6] Creating New Relic namespace and secrets..."
 kubectl create namespace newrelic --dry-run=client -o yaml | kubectl apply -f -
-kubectl create namespace demo-newrelic --dry-run=client -o yaml | kubectl apply -f -
+kubectl create namespace eks-ec2-newrelic --dry-run=client -o yaml | kubectl apply -f -
+kubectl create namespace eks-fargate-newrelic --dry-run=client -o yaml | kubectl apply -f -
 
 # License key secret in the newrelic operator namespace
 kubectl create secret generic newrelic-secret \
@@ -37,11 +43,20 @@ kubectl create secret generic newrelic-secret \
   -n newrelic \
   --dry-run=client -o yaml | kubectl apply -f -
 
-# License key secret in the app namespace (used by Instrumentation CR)
-kubectl create secret generic newrelic-secret \
-  --from-literal=license-key="${NR_LICENSE_KEY}" \
-  -n demo-newrelic \
-  --dry-run=client -o yaml | kubectl apply -f -
+# License key secrets in app namespaces (used by Instrumentation CRs)
+for ns in eks-ec2-newrelic eks-fargate-newrelic; do
+  args=(
+    "--from-literal=license-key=${NR_LICENSE_KEY}"
+    "--from-literal=account-id=${NR_ACCOUNT_ID}"
+    "--from-literal=api-key=${NEW_RELIC_API_KEY:-}"
+    "-n" "${ns}"
+  )
+  if [ -n "${NR_BROWSER_SNIPPET:-}" ]; then
+    args+=("--from-literal=browser-snippet=${NR_BROWSER_SNIPPET}")
+  fi
+  kubectl create secret generic newrelic-secret "${args[@]}" \
+    --dry-run=client -o yaml | kubectl apply -f -
+done
 
 echo ""
 echo "==> [3/6] Installing nri-bundle..."
@@ -62,7 +77,7 @@ echo "==> [4/6] Applying Instrumentation CR (NR APM Auto-Attach for Python)..."
 # This CR tells k8s-agents-operator which NR agent image to inject
 # and how to configure it (license key, distributed tracing, etc.)
 kubectl apply -f "${ROOT_DIR}/k8s/newrelic-instrumentation.yaml"
-echo "  Instrumentation CR applied to demo-newrelic namespace"
+echo "  Instrumentation CRs applied to eks-ec2-newrelic and eks-fargate-newrelic namespaces"
 
 echo ""
 echo "==> [5/6] New Relic AWS Integration setup..."
@@ -95,9 +110,11 @@ echo "   nri-bundle DaemonSet → New Relic Kubernetes / Infrastructure"
 echo "   Fluent Bit → New Relic Logs"
 echo ""
 echo " Next steps:"
-echo "   make deploy-newrelic        # Deploy apps to demo-newrelic namespace"
-echo "   make port-forward-newrelic  # http://localhost:8082"
-echo "   make load-newrelic          # Generate traces (NR path)"
+echo "   make ec2-newrelic-deploy             # Deploy apps to eks-ec2-newrelic namespace"
+echo "   make fargate-newrelic-deploy         # Deploy apps to eks-fargate-newrelic namespace"
+echo "   make port-forward-newrelic           # http://localhost:8082"
+echo "   make port-forward-fargate-newrelic   # http://localhost:8083"
+echo "   make load                            # Generate traces"
 echo ""
 echo " New Relic Console:"
 echo "   APM:     https://one.newrelic.com/apm"

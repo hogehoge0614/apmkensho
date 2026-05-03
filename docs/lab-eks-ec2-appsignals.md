@@ -1038,7 +1038,7 @@ fields @timestamp, @message
 
 ### ログ（CloudWatch Logs）
 
-- [ ] `/obs-poc/eks-ec2-appsignals/application` で構造化 JSON ログを確認した
+- [ ] `/aws/containerinsights/obs-poc/application` で構造化 JSON ログを確認した
 - [ ] Logs Insights で `event: slow_query` を検索できた
 - [ ] Logs Insights で `event: error_injected` を検索できた
 - [ ] Logs Insights で `event: alert_storm` を検索できた

@@ -413,7 +413,7 @@ SINCE 30 minutes ago TIMESERIES 1 minute
 | コンテナ監視（Pod） | ✅ Container Insights | ✅ K8s Explorer | ✅（Pod のみ） | ❌ |
 | ログ | ✅ CloudWatch Logs | ✅ NR Logs | ✅ CloudWatch Logs | ❌ |
 | Logs in Context | 2ステップ（trace_id手動） | ✅ 1クリック | 2ステップ | ❌ |
-| ブラウザ監視 | ✅ CloudWatch RUM | ✅ NR Browser | ✅（手動設定） | ✅ NR Browser |
+| ブラウザ監視 | ✅ CloudWatch RUM | ✅ NR Browser | ✅ CloudWatch RUM | ✅ NR Browser |
 | カスタムメトリクス | ✅ StatsD | ✅ NR Flex | ❌ | ❌ |
 | 外形監視 | ✅ Synthetics | ✅ Synthetics（共通） | ✅ Synthetics（共通） | ✅ Synthetics（共通） |
 | NRQL / 任意クエリ | — | ✅ | — | ✅ |

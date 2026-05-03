@@ -1,6 +1,6 @@
 # ============================================================
 # EKS Fargate Profile
-# Covers demo-fargate namespace and kube-system (for CoreDNS on Fargate)
+# Covers eks-fargate-appsignals / eks-fargate-newrelic namespaces
 # ============================================================
 
 resource "aws_iam_role" "eks_fargate" {
@@ -38,15 +38,19 @@ resource "aws_iam_role_policy_attachment" "eks_fargate_xray" {
   role       = aws_iam_role.eks_fargate.name
 }
 
-# Fargate Profile for demo-fargate namespace
-resource "aws_eks_fargate_profile" "demo_fargate" {
+# Fargate Profile for App Signals and New Relic Fargate namespaces
+resource "aws_eks_fargate_profile" "obs_fargate" {
   cluster_name           = aws_eks_cluster.main.name
-  fargate_profile_name   = "demo-fargate"
+  fargate_profile_name   = "obs-poc-fargate"
   pod_execution_role_arn = aws_iam_role.eks_fargate.arn
   subnet_ids             = aws_subnet.private[*].id
 
   selector {
-    namespace = "demo-fargate"
+    namespace = "eks-fargate-appsignals"
+  }
+
+  selector {
+    namespace = "eks-fargate-newrelic"
   }
 
   depends_on = [

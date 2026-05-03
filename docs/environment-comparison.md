@@ -32,12 +32,12 @@ Pod (FastAPI)
 ```
 Pod (FastAPI)
   ← OTel Python SDK（OTel Operator が init container として自動注入）
-  → OTLP :4316 → CloudWatch Agent Service（Deployment として稼働）
-  → X-Ray / App Signals
+  → OTLP :4316 → ADOT Collector Deployment（同一 namespace 内）
+  → X-Ray / App Signals（VPC Endpoint 経由、インターネット不要）
 ```
 
-- **Auto-instrumentation**: EC2 環境と同じ（OTel Operator が注入）
-- **エージェント**: DaemonSet 不可 → Fargate 用の CloudWatch Agent Deployment を別途配置
+- **Auto-instrumentation**: `instrumentation.opentelemetry.io/inject-python: "appsignals-fargate"` で namespace 内の Instrumentation CR を参照
+- **エージェント**: DaemonSet 不可 → **ADOT Collector を Deployment として namespace 内に配置**（EC2 DaemonSet と完全に独立）
 - **ログ**: Fargate 組み込み Fluent Bit（`aws-observability` ConfigMap）→ CloudWatch Logs
 - **StatsD**: DaemonSet がないため未対応
 
@@ -77,7 +77,7 @@ Pod (FastAPI)
 | k8s-agents-operator | Deployment | ✅ 対応 |
 | **NR Python APM Agent** | init container | ✅ 対応（APM トレースは取得可能） |
 
-CloudWatch App Signals は Fargate 向けに **Agent を DaemonSet ではなく Deployment として代替配置する構成**を公式サポートしているのに対し、New Relic は現時点でこの代替構成を公式提供していない。
+CloudWatch App Signals は AWS VPC Endpoint を活用し **インターネット接続なしで Fargate から直接 App Signals / X-Ray に送信**できる。一方 New Relic の APM エージェントは `collector.newrelic.com`（外部）への HTTPS 通信が必要であり、Fargate 環境では NAT Gateway が必須となる。
 
 ---
 

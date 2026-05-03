@@ -48,13 +48,13 @@ cat <<'EOF'
 [1-C] CloudWatch Container Insights
   URL: CloudWatch > Insights > Container Insights
   観点:
-  - demo-ec2 namespace のPod CPU/Memoryが見えるか
-  - demo-fargate namespace のPod CPU/Memoryが見えるか (制約あり)
+  - eks-ec2-appsignals namespace のPod CPU/Memoryが見えるか
+  - eks-fargate-appsignals namespace のPod CPU/Memoryが見えるか (制約あり)
   - Kubernetes Service Mapが表示されるか
   EC2 vs Fargate 差分: Fargateは拡張メトリクスが制限される
 
 [1-D] CloudWatch Logs
-  URL: CloudWatch > Logs > Log groups > /obs-poc/demo-ec2/application
+  URL: CloudWatch > Logs > Log groups > /aws/containerinsights/obs-poc/application
   観点:
   - 構造化JSONログが出力されているか
   - trace_id フィールドを含むか (Logs in Context)
@@ -111,7 +111,7 @@ cat <<'EOF'
 [2-C] New Relic Kubernetes
   URL: https://one.newrelic.com/kubernetes
   観点:
-  - demo-newrelic namespace のPod一覧が見えるか
+  - eks-ec2-newrelic namespace のPod一覧が見えるか
   - CPU/Memory 使用率がリアルタイムで更新されるか
   - Pod → APMサービスへのリンクが機能するか
 

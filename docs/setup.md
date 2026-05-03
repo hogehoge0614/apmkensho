@@ -104,6 +104,11 @@ echo "FARGATE_AS_BASE=http://${FARGATE_AS_LB}" >> .env && source .env
 make load
 ```
 
+オプション:
+```bash
+make fargate-appsignals-enable-rum  # CloudWatch RUM ブラウザ監視
+```
+
 > **Fargate の制約:** DaemonSet 非対応のため StatsD カスタムメトリクスは未対応。CloudWatch Agent は Deployment として別途起動します。
 
 ### [3] EKS on EC2 + New Relic（`eks-ec2-newrelic`）

@@ -79,7 +79,7 @@ variable "new_relic_metric_stream_enabled" {
 }
 
 variable "cw_to_newrelic_enabled" {
-  description = "Enable CloudWatch Logs → New Relic forwarder Lambda (agentless scenario)"
+  description = "Enable CloudWatch Logs → Kinesis Firehose → New Relic log forwarding"
   type        = bool
   default     = false
 }

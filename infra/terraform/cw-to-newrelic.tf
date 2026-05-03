@@ -45,15 +45,15 @@ resource "aws_iam_role" "cw_to_nr_firehose" {
 }
 
 resource "aws_iam_role_policy" "cw_to_nr_firehose_s3" {
-  count  = var.cw_to_newrelic_enabled ? 1 : 0
-  name   = "s3-backup"
-  role   = aws_iam_role.cw_to_nr_firehose[0].id
+  count = var.cw_to_newrelic_enabled ? 1 : 0
+  name  = "s3-backup"
+  role  = aws_iam_role.cw_to_nr_firehose[0].id
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Effect   = "Allow"
-      Action   = ["s3:PutObject", "s3:GetBucketLocation"]
+      Effect = "Allow"
+      Action = ["s3:PutObject", "s3:GetBucketLocation"]
       Resource = [
         aws_s3_bucket.cw_to_nr_backup[0].arn,
         "${aws_s3_bucket.cw_to_nr_backup[0].arn}/*",
@@ -79,9 +79,9 @@ resource "aws_iam_role" "cw_logs_to_firehose" {
 }
 
 resource "aws_iam_role_policy" "cw_logs_firehose_put" {
-  count  = var.cw_to_newrelic_enabled ? 1 : 0
-  name   = "firehose-put"
-  role   = aws_iam_role.cw_logs_to_firehose[0].id
+  count = var.cw_to_newrelic_enabled ? 1 : 0
+  name  = "firehose-put"
+  role  = aws_iam_role.cw_logs_to_firehose[0].id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -104,8 +104,8 @@ resource "aws_kinesis_firehose_delivery_stream" "cw_to_nr_logs" {
     url                = "https://log-api.newrelic.com/log/v1"
     name               = "New Relic Logs"
     access_key         = var.new_relic_license_key
-    buffering_size     = 1   # MB (minimum)
-    buffering_interval = 60  # seconds (minimum)
+    buffering_size     = 1  # MB (minimum)
+    buffering_interval = 60 # seconds (minimum)
     role_arn           = aws_iam_role.cw_to_nr_firehose[0].arn
     s3_backup_mode     = "FailedDataOnly"
 

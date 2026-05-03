@@ -132,7 +132,7 @@ resource "aws_iam_role" "app_signals_ec2" {
         Action = "sts:AssumeRoleWithWebIdentity"
         Condition = {
           StringEquals = {
-            "${local.oidc_provider}:sub" = "system:serviceaccount:demo-ec2:app-signals-sa"
+            "${local.oidc_provider}:sub" = "system:serviceaccount:eks-ec2-appsignals:app-signals-sa"
             "${local.oidc_provider}:aud" = "sts.amazonaws.com"
           }
         }
@@ -154,8 +154,8 @@ resource "aws_iam_role" "app_signals_fargate" {
         }
         Action = "sts:AssumeRoleWithWebIdentity"
         Condition = {
-          StringEquals = {
-            "${local.oidc_provider}:sub" = "system:serviceaccount:demo-fargate:app-signals-sa"
+          StringLike = {
+            "${local.oidc_provider}:sub" = "system:serviceaccount:eks-fargate-appsignals:*"
             "${local.oidc_provider}:aud" = "sts.amazonaws.com"
           }
         }

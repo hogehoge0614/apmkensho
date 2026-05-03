@@ -12,7 +12,7 @@ from fastapi.templating import Jinja2Templates
 from pythonjsonlogger import jsonlogger
 
 SERVICE     = os.getenv("SERVICE_NAME",  "netwatch-ui")
-ENVIRONMENT = os.getenv("ENVIRONMENT",   "demo-ec2")
+ENVIRONMENT = os.getenv("ENVIRONMENT",   "eks-ec2-appsignals")
 NODE_TYPE   = os.getenv("NODE_TYPE",     "EC2")
 DEVICE_API  = os.getenv("DEVICE_API_URL","http://device-api:8000")
 ALERT_API   = os.getenv("ALERT_API_URL", "http://alert-api:8000")

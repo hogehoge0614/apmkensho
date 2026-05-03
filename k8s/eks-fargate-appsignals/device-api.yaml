@@ -17,7 +17,7 @@ spec:
         app: device-api
         environment: eks-fargate-appsignals
       annotations:
-        instrumentation.opentelemetry.io/inject-python: "true"
+        instrumentation.opentelemetry.io/inject-python: "appsignals-fargate"
         prometheus.io/scrape: "true"
         prometheus.io/port: "8000"
     spec:
@@ -34,7 +34,7 @@ spec:
             - name: ENVIRONMENT
               value: "eks-fargate-appsignals"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: "http://cloudwatch-agent.amazon-cloudwatch:4316"
+              value: "http://adot-collector:4316"
             - name: OTEL_LOGS_EXPORTER
               value: "none"
             - name: OTEL_SERVICE_NAME
