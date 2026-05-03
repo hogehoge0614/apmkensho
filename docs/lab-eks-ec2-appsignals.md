@@ -26,6 +26,26 @@
 
 ## 1. このガイドについて（推奨実施フロー）
 
+### この環境だけを始める手順
+
+共通準備（`make up` / `make create-secrets` / `make build-push`）が完了していれば、この環境だけを単独でデプロイできます。別日に再開する場合は、先に `make check-prereq` と `kubectl config current-context` で接続先を確認してください。
+
+```bash
+make install-cloudwatch-full
+make ec2-appsignals-deploy
+make ec2-appsignals-verify
+
+EC2_AS_LB=$(kubectl get svc netwatch-ui -n eks-ec2-appsignals \
+  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+echo "EC2_AS_BASE=http://${EC2_AS_LB}" >> .env
+source .env
+
+FARGATE_AS_BASE="" EC2_NR_BASE="" FARGATE_NR_BASE="" \
+  ./scripts/load.sh normal-device-detail
+```
+
+以降の検証は `EC2_AS_BASE` だけを使います。他環境が未構築でも進められます。
+
 ### 利用可能な機能
 
 | 機能 | 提供サービス | 状態 |

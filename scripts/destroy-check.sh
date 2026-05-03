@@ -52,6 +52,18 @@ aws logs describe-log-groups \
   --query "logGroups[].logGroupName" \
   --output table 2>/dev/null
 
+aws logs describe-log-groups \
+  --region "${AWS_REGION}" \
+  --log-group-name-prefix "/aws/containerinsights/${CLUSTER_NAME}" \
+  --query "logGroups[].logGroupName" \
+  --output table 2>/dev/null
+
+aws logs describe-log-groups \
+  --region "${AWS_REGION}" \
+  --log-group-name-prefix "/aws/synthetics/${CLUSTER_NAME}" \
+  --query "logGroups[].logGroupName" \
+  --output table 2>/dev/null
+
 echo ""
 echo "=== CloudWatch Synthetics Canaries ==="
 aws synthetics describe-canaries \
@@ -90,6 +102,7 @@ echo "   aws eks delete-cluster --name ${CLUSTER_NAME} --region ${AWS_REGION}"
 echo "   aws ecr delete-repository --force --repository-name obs-poc/<svc>"
 echo "   aws s3 rb s3://<bucket-name> --force"
 echo "   aws logs delete-log-group --log-group-name /obs-poc/..."
+echo "   aws logs delete-log-group --log-group-name /aws/containerinsights/${CLUSTER_NAME}/..."
 echo ""
 echo " Or re-run: cd infra/terraform && terraform destroy -auto-approve"
 echo "======================================================"

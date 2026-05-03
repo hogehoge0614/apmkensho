@@ -1,5 +1,7 @@
 # セットアップ・デプロイ手順
 
+このドキュメントは、共通準備と環境別セットアップを分けて記載します。4環境を同じ日にすべて作る必要はありません。初回に共通準備を済ませた後は、検証したい環境の手順だけを実行してください。
+
 ## 前提条件
 
 以下のツールがインストール・設定済みであること:
@@ -36,7 +38,15 @@ NEW_RELIC_ACCOUNT_ID=...
 
 ---
 
-## 共通セットアップ（初回のみ・全環境共通）
+## 共通準備（初回のみ・全環境共通）
+
+以下は `EKS on EC2 / EKS on Fargate` と `App Signals / New Relic` の全環境で共通です。環境別のデプロイに進む前に一度だけ実行します。
+
+別日に再開する場合:
+- `.env` が残っていることを確認する
+- `make check-prereq` で AWS 認証とツールを確認する
+- `kubectl config current-context` で対象クラスターを確認する
+- アプリケーションコードや Dockerfile を変更していなければ `make build-push` は再実行不要
 
 ### Step 1: インフラ構築（約20分）
 
@@ -66,7 +76,13 @@ make build-push
 
 ## 環境別セットアップ
 
+以降の各セクションは単独で完結します。共通準備が完了していれば、対象環境のセクションだけ実行してください。
+
+`make load` は `.env` に設定された到達可能な全環境へ送信します。1環境だけ検証したい場合は、対象外の `*_BASE` を空にして `./scripts/load.sh` を実行します。各環境の手順内に例を記載しています。
+
 ### [1] EKS on EC2 + App Signals（`eks-ec2-appsignals`）
+
+**この環境だけを作る場合の流れ:**
 
 ```bash
 make install-cloudwatch-full       # CloudWatch スタック（OTel Operator + ADOT + Fluent Bit）
@@ -78,7 +94,8 @@ EC2_AS_LB=$(kubectl get svc netwatch-ui -n eks-ec2-appsignals \
   -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
 echo "EC2_AS_BASE=http://${EC2_AS_LB}" >> .env && source .env
 
-make load                          # トラフィック生成
+FARGATE_AS_BASE="" EC2_NR_BASE="" FARGATE_NR_BASE="" \
+  ./scripts/load.sh normal-device-detail
 ```
 
 オプション:
@@ -89,10 +106,10 @@ make ec2-appsignals-enable-custom-metrics  # StatsD カスタムメトリクス
 
 ### [2] EKS on Fargate + App Signals（`eks-fargate-appsignals`）
 
-> 前提: 共通手順（make up / make create-secrets / make build-push）が完了していること。
+**この環境だけを作る場合の流れ:**
 
 ```bash
-make install-cloudwatch-full       # EC2 環境と共用可
+make install-cloudwatch-full       # CloudWatch スタック。EC2 App Signals と共用可
 make fargate-appsignals-deploy     # eks-fargate-appsignals namespace にデプロイ
 make fargate-appsignals-verify     # Pod 起動の確認
 
@@ -101,7 +118,8 @@ FARGATE_AS_LB=$(kubectl get svc netwatch-ui -n eks-fargate-appsignals \
   -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
 echo "FARGATE_AS_BASE=http://${FARGATE_AS_LB}" >> .env && source .env
 
-make load
+EC2_AS_BASE="" EC2_NR_BASE="" FARGATE_NR_BASE="" \
+  ./scripts/load.sh normal-device-detail
 ```
 
 オプション:
@@ -112,6 +130,8 @@ make fargate-appsignals-enable-rum  # CloudWatch RUM ブラウザ監視
 > **Fargate の制約:** DaemonSet 非対応のため StatsD カスタムメトリクスは未対応。CloudWatch Agent は Deployment として別途起動します。
 
 ### [3] EKS on EC2 + New Relic（`eks-ec2-newrelic`）
+
+**この環境だけを作る場合の流れ:**
 
 > 前提: `.env` に `NEW_RELIC_LICENSE_KEY` / `NEW_RELIC_ACCOUNT_ID` を設定済みであること。
 
@@ -125,7 +145,8 @@ EC2_NR_LB=$(kubectl get svc netwatch-ui -n eks-ec2-newrelic \
   -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
 echo "EC2_NR_BASE=http://${EC2_NR_LB}" >> .env && source .env
 
-make load
+EC2_AS_BASE="" FARGATE_AS_BASE="" FARGATE_NR_BASE="" \
+  ./scripts/load.sh normal-device-detail
 ```
 
 ### [4] EKS on Fargate + New Relic（`eks-fargate-newrelic`）
@@ -133,9 +154,12 @@ make load
 > ⚠️ **APM トレースのみ。** Infrastructure Agent (DaemonSet) は Fargate 非対応のためインフラメトリクス・ログ転送は収集されません。  
 > 詳細 → [`docs/environment-comparison.md`](environment-comparison.md)
 
-> 前提: `make install-newrelic-full` が完了していること（`eks-ec2-newrelic` と共用）。
+**この環境だけを作る場合の流れ:**
+
+> 前提: `.env` に `NEW_RELIC_LICENSE_KEY` / `NEW_RELIC_ACCOUNT_ID` を設定済みであること。`make install-newrelic-full` は `eks-ec2-newrelic` と共用できます。
 
 ```bash
+make install-newrelic-full         # 未実行の場合のみ。既存 New Relic スタックがあればスキップ可
 make fargate-newrelic-deploy       # eks-fargate-newrelic namespace にデプロイ
 make fargate-newrelic-verify       # NR Python Agent の注入確認
 
@@ -144,7 +168,8 @@ FARGATE_NR_LB=$(kubectl get svc netwatch-ui -n eks-fargate-newrelic \
   -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
 echo "FARGATE_NR_BASE=http://${FARGATE_NR_LB}" >> .env && source .env
 
-make load
+EC2_AS_BASE="" FARGATE_AS_BASE="" EC2_NR_BASE="" \
+  ./scripts/load.sh normal-device-detail
 ```
 
 ---
@@ -154,16 +179,19 @@ make load
 ### App Signals 環境（EC2 / Fargate 共通）
 
 ```bash
+NS=eks-ec2-appsignals        # Fargate の場合: eks-fargate-appsignals
+BASE="${EC2_AS_BASE}"        # Fargate の場合: "${FARGATE_AS_BASE}"
+
 # OTel init container の注入確認（全4サービス）
 for svc in netwatch-ui device-api alert-api metrics-collector; do
   echo -n "${svc}: "
-  kubectl get pod -n eks-ec2-appsignals -l app=${svc} \
+  kubectl get pod -n "${NS}" -l app=${svc} \
     -o jsonpath='{.items[0].spec.initContainers[*].name}' 2>/dev/null
   echo ""
 done
 
 # 3ホップトレースを1本生成
-curl -s "${EC2_AS_BASE}/devices/TKY-CORE-001" > /dev/null
+curl -s "${BASE}/devices/TKY-CORE-001" > /dev/null
 echo "トレース送信完了（App Signals に反映されるまで 2〜3 分）"
 ```
 
@@ -179,8 +207,10 @@ Application Signals > Service Map
 ### New Relic 環境（EC2 / Fargate 共通）
 
 ```bash
+NS=eks-ec2-newrelic          # Fargate の場合: eks-fargate-newrelic
+
 # NR Agent init container の注入確認
-kubectl get pod -n eks-ec2-newrelic -l app=netwatch-ui \
+kubectl get pod -n "${NS}" -l app=netwatch-ui \
   -o jsonpath='{.items[0].spec.initContainers[*].name}'
 # 期待値: newrelic-init が含まれること
 ```
@@ -208,6 +238,22 @@ make load-storm     # Alert Storm シナリオ
 ```
 
 `make load` は `.env` に設定された `EC2_AS_BASE` / `FARGATE_AS_BASE` / `EC2_NR_BASE` / `FARGATE_NR_BASE` の到達可能な全環境にトラフィックを送信します。
+
+単独環境だけに送信する例:
+
+```bash
+# EC2 + App Signals のみ
+FARGATE_AS_BASE="" EC2_NR_BASE="" FARGATE_NR_BASE="" ./scripts/load.sh normal-device-detail
+
+# Fargate + App Signals のみ
+EC2_AS_BASE="" EC2_NR_BASE="" FARGATE_NR_BASE="" ./scripts/load.sh normal-device-detail
+
+# EC2 + New Relic のみ
+EC2_AS_BASE="" FARGATE_AS_BASE="" FARGATE_NR_BASE="" ./scripts/load.sh normal-device-detail
+
+# Fargate + New Relic のみ
+EC2_AS_BASE="" FARGATE_AS_BASE="" EC2_NR_BASE="" ./scripts/load.sh normal-device-detail
+```
 
 ---
 

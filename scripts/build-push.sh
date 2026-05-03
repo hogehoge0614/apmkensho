@@ -21,6 +21,31 @@ SERVICES=(
   "metrics-collector"
 )
 
+ensure_docker_running() {
+  if docker info >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if [ "$(uname -s)" = "Darwin" ] && [ -d "/Applications/Docker.app" ]; then
+    echo "==> Docker daemon is not running. Starting Docker Desktop..."
+    open -a Docker
+
+    for _ in $(seq 1 60); do
+      if docker info >/dev/null 2>&1; then
+        echo "==> Docker is ready."
+        return 0
+      fi
+      sleep 2
+    done
+  fi
+
+  echo "ERROR: Docker daemon is not running."
+  echo "Start Docker Desktop, then re-run: make build-push"
+  exit 1
+}
+
+ensure_docker_running
+
 echo "==> Logging in to ECR: ${ECR_REGISTRY}"
 aws ecr get-login-password --region "${AWS_REGION}" | \
   docker login --username AWS --password-stdin "${ECR_REGISTRY}"

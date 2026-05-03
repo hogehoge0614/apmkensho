@@ -16,13 +16,14 @@ SVC           ?= netwatch-ui
 TAIL          ?= 50
 AWS_ACCOUNT_ID ?= $(shell aws sts get-caller-identity --query Account --output text 2>/dev/null || echo "unknown")
 ECR_REGISTRY  ?= $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com
+CLEAN_STALE_CLOUDWATCH_LOGS ?= true
 
 TF_DIR     := infra/terraform
 SCRIPTS_DIR := scripts
 
 .PHONY: help \
         check-prereq aws-whoami kube-context \
-        up build-push create-secrets \
+        up cleanup-stale-cloudwatch-logs import-cloudwatch-log-groups build-push create-secrets \
         ec2-appsignals-deploy ec2-appsignals-verify ec2-appsignals-down \
         ec2-appsignals-enable-rum ec2-appsignals-enable-custom-metrics \
         fargate-appsignals-deploy fargate-appsignals-verify fargate-appsignals-down \
@@ -148,7 +149,15 @@ tf-apply:
 # ============================================================
 # Core lifecycle
 # ============================================================
-up: tf-init tf-apply
+cleanup-stale-cloudwatch-logs:
+	@echo "==> Cleaning stale CloudWatch Log Groups from previous runs..."
+	@$(SCRIPTS_DIR)/cleanup-stale-cloudwatch-logs.sh
+
+import-cloudwatch-log-groups:
+	@echo "==> Importing pre-existing CloudWatch Log Groups into Terraform state..."
+	@TF_DIR=$(TF_DIR) $(SCRIPTS_DIR)/import-cloudwatch-log-groups.sh
+
+up: tf-init cleanup-stale-cloudwatch-logs import-cloudwatch-log-groups tf-apply
 	@echo ""
 	@echo "==> Updating kubeconfig..."
 	@aws eks update-kubeconfig \
@@ -365,7 +374,11 @@ down:
 		2>/dev/null || echo "  Terraform destroy completed with some errors - check manually"
 
 	@echo ""
-	@echo "==> [5/5] Running destroy-check..."
+	@echo "==> [5/6] Cleaning stale CloudWatch Log Groups..."
+	@$(SCRIPTS_DIR)/cleanup-stale-cloudwatch-logs.sh
+
+	@echo ""
+	@echo "==> [6/6] Running destroy-check..."
 	@$(SCRIPTS_DIR)/destroy-check.sh
 
 	@echo ""

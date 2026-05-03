@@ -13,10 +13,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-EC2_AS_BASE="${EC2_AS_BASE:-http://localhost:8080}"
-FARGATE_AS_BASE="${FARGATE_AS_BASE:-http://localhost:8081}"
-EC2_NR_BASE="${EC2_NR_BASE:-}"
-FARGATE_NR_BASE="${FARGATE_NR_BASE:-}"
+EC2_AS_BASE="${EC2_AS_BASE-http://localhost:8080}"
+FARGATE_AS_BASE="${FARGATE_AS_BASE-http://localhost:8081}"
+EC2_NR_BASE="${EC2_NR_BASE-}"
+FARGATE_NR_BASE="${FARGATE_NR_BASE-}"
 ROUNDS="${ROUNDS:-3}"
 DELAY="${DELAY:-1}"
 SCENARIO="${1:-all}"
@@ -154,14 +154,16 @@ run_on_available_targets() {
   shift
   local scenarios=("$@")
 
-  if check_target "${EC2_AS_BASE}"; then
+  if [ -n "${EC2_AS_BASE}" ] && check_target "${EC2_AS_BASE}"; then
     run_scenarios "${EC2_AS_BASE}" "EKS on EC2 (AppSignals) / ${label}" "${scenarios[@]}"
   else
     echo "  [SKIP] EC2 not reachable at ${EC2_AS_BASE}"
   fi
 
-  if check_target "${FARGATE_AS_BASE}"; then
+  if [ -n "${FARGATE_AS_BASE}" ] && check_target "${FARGATE_AS_BASE}"; then
     run_scenarios "${FARGATE_AS_BASE}" "EKS on Fargate (AppSignals) / ${label}" "${scenarios[@]}"
+  else
+    echo "  [SKIP] Fargate AppSignals not reachable at ${FARGATE_AS_BASE}"
   fi
 
   if [ -n "${EC2_NR_BASE}" ] && check_target "${EC2_NR_BASE}"; then
