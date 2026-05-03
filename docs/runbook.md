@@ -1,8 +1,8 @@
 # NetWatch 運用 Runbook
 
 > 対象システム: NetWatch（ネットワーク機器監視 PoC）  
-> 対象環境: **EC2 + App Signals** / EKS クラスター: `obs-poc` / ネームスペース: `eks-ec2-appsignals` / リージョン: `ap-northeast-1`  
-> Fargate 環境は `eks-fargate-appsignals`、New Relic 環境は `eks-ec2-newrelic` に読み替えてください  
+> 対象環境: `eks-ec2-appsignals` / `eks-fargate-appsignals` / `eks-ec2-newrelic` / `eks-fargate-newrelic`  
+> EKS クラスター: `obs-poc` / リージョン: `ap-northeast-1`  
 > 最終更新: 2026-04-30
 
 ---
@@ -15,6 +15,20 @@
 | device-api | 機器情報 API（RDS PostgreSQL） | ClusterIP | 8000 |
 | metrics-collector | メトリクス収集 API | ClusterIP | 8000 |
 | alert-api | アラート管理 API（インメモリ） | ClusterIP | 8000 |
+
+---
+
+## ハンズオンでの使い方
+
+この Runbook は「異常を先に検知し、APM で影響範囲と原因を絞り込む」流れを練習するためのものです。`make load-*` は負荷テストではなく、APM に調査対象のトランザクションを記録させるための再現操作として使います。
+
+| シナリオ | 最初のアラート例 | APM で特定すること | 根本原因の裏取り |
+|----------|------------------|--------------------|------------------|
+| Slow Query | Latency P99 閾値超過、SLO / Service Level 悪化 | `device-api` の DB 処理が遅く、`netwatch-ui` に波及していること | App Signals は X-Ray + Logs、New Relic は Transaction Traces / Databases |
+| Error Inject | 5xx エラー率閾値超過、ERROR ログ増加、Canary FAIL | 500 の起点が `device-api` で、`netwatch-ui` は下流エラーを受けていること | App Signals は fault trace + Logs、New Relic は Errors Inbox + trace + Logs in Context |
+| Alert Storm | `alert-api` の Throughput / RequestCount / ログ量 / CPU 急増 | 急増の中心が `alert-api` で、影響が `/alerts` 系に閉じているか | EC2 はログ/インフラ監視まで同一ツールで確認しやすく、Fargate は APM と Pod/Fargate ログ中心 |
+
+各環境の具体的な画面遷移は、対応する `docs/lab-*.md` の「アラート起点の調査シナリオ」を参照してください。
 
 ---
 

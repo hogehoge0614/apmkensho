@@ -13,6 +13,21 @@ CLUSTER_NAME="${CLUSTER_NAME:-obs-poc}"
 NR_LICENSE_KEY="${NEW_RELIC_LICENSE_KEY:?NEW_RELIC_LICENSE_KEY must be set}"
 NR_ACCOUNT_ID="${NEW_RELIC_ACCOUNT_ID:?NEW_RELIC_ACCOUNT_ID must be set}"
 
+require_cmd() {
+  local name="$1"
+  local hint="$2"
+
+  if ! command -v "${name}" >/dev/null 2>&1; then
+    echo "[ERROR] Required command not found: ${name}"
+    echo "Install it first, then re-run: make install-newrelic-full"
+    echo "  ${hint}"
+    exit 1
+  fi
+}
+
+require_cmd helm "macOS/Homebrew: brew install helm"
+require_cmd kubectl "macOS/Homebrew: brew install kubectl"
+
 if [ "${NR_LICENSE_KEY}" = "your_license_key_here" ] || [ "${NR_ACCOUNT_ID}" = "your_account_id_here" ]; then
   echo "[ERROR] Set NEW_RELIC_LICENSE_KEY and NEW_RELIC_ACCOUNT_ID in .env before installing New Relic."
   exit 1

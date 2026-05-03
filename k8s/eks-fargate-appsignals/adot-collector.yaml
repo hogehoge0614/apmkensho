@@ -11,6 +11,31 @@ metadata:
   annotations:
     eks.amazonaws.com/role-arn: "${APP_SIGNALS_FARGATE_ROLE_ARN}"
 ---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: eks-fargate-appsignals-adot-collector
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "nodes", "services", "endpoints", "namespaces"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: eks-fargate-appsignals-adot-collector
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: eks-fargate-appsignals-adot-collector
+subjects:
+  - kind: ServiceAccount
+    name: adot-collector-sa
+    namespace: eks-fargate-appsignals
+---
 apiVersion: cloudwatch.aws.amazon.com/v1alpha1
 kind: AmazonCloudWatchAgent
 metadata:
@@ -20,7 +45,12 @@ spec:
   mode: deployment
   replicas: 1
   serviceAccount: adot-collector-sa
-  image: "${ECR_REGISTRY}/obs-poc/adot-collector:latest"
+  podAnnotations:
+    instrumentation.opentelemetry.io/inject-python: "false"
+    instrumentation.opentelemetry.io/inject-java: "false"
+    instrumentation.opentelemetry.io/inject-nodejs: "false"
+    instrumentation.opentelemetry.io/inject-dotnet: "false"
+  image: "602401143452.dkr.ecr.${AWS_REGION}.amazonaws.com/eks/observability/cloudwatch-agent:1.300066.0b1367"
   config: '{"agent":{"region":"${AWS_REGION}"},"logs":{"metrics_collected":{"application_signals":{"hosted_in":"${CLUSTER_NAME}"}}},"traces":{"traces_collected":{"application_signals":{}}}}'
   env:
     - name: K8S_NAMESPACE
@@ -29,6 +59,8 @@ spec:
           fieldPath: metadata.namespace
     - name: K8S_CLUSTER_NAME
       value: "${CLUSTER_NAME}"
+    - name: RUN_WITH_IRSA
+      value: "True"
   resources:
     requests:
       cpu: "100m"
@@ -48,3 +80,21 @@ metadata:
 spec:
   exporter:
     endpoint: http://adot-collector:4316
+  sampler:
+    type: parentbased_traceidratio
+    argument: "1"
+  env:
+    - name: OTEL_LOGS_EXPORTER
+      value: "none"
+    - name: OTEL_METRICS_EXPORTER
+      value: "none"
+    - name: OTEL_AWS_APPLICATION_SIGNALS_ENABLED
+      value: "true"
+    - name: OTEL_PYTHON_DISTRO
+      value: "aws_distro"
+    - name: OTEL_PYTHON_CONFIGURATOR
+      value: "aws_configurator"
+    - name: OTEL_AWS_APPLICATION_SIGNALS_EXPORTER_ENDPOINT
+      value: "http://adot-collector:4316/v1/metrics"
+    - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+      value: "http://adot-collector:4316/v1/traces"

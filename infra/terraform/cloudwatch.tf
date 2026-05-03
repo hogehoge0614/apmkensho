@@ -50,6 +50,11 @@ resource "aws_cloudwatch_log_group" "synthetics" {
   retention_in_days = 1
 }
 
+resource "aws_cloudwatch_log_group" "application_signals_data" {
+  name              = "/aws/application-signals/data"
+  retention_in_days = 1
+}
+
 # ============================================================
 # CloudWatch Dashboard
 # ============================================================

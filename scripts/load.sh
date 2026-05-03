@@ -13,8 +13,23 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-EC2_AS_BASE="${EC2_AS_BASE-http://localhost:8080}"
-FARGATE_AS_BASE="${FARGATE_AS_BASE-http://localhost:8081}"
+discover_lb_base() {
+  local namespace="$1"
+  local host
+
+  if ! command -v kubectl >/dev/null 2>&1; then
+    return 0
+  fi
+
+  host="$(kubectl get svc netwatch-ui -n "${namespace}" \
+    -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)"
+  if [ -n "${host}" ]; then
+    printf 'http://%s' "${host}"
+  fi
+}
+
+EC2_AS_BASE="${EC2_AS_BASE-$(discover_lb_base eks-ec2-appsignals)}"
+FARGATE_AS_BASE="${FARGATE_AS_BASE-$(discover_lb_base eks-fargate-appsignals)}"
 EC2_NR_BASE="${EC2_NR_BASE-}"
 FARGATE_NR_BASE="${FARGATE_NR_BASE-}"
 ROUNDS="${ROUNDS:-3}"

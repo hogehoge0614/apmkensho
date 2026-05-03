@@ -8,6 +8,8 @@ if [ -f "${ROOT_DIR}/.env" ]; then
   set -a; source "${ROOT_DIR}/.env"; set +a
 fi
 
+AWS_REGION="${AWS_REGION:-ap-northeast-1}"
+CLUSTER_NAME="${CLUSTER_NAME:-obs-poc}"
 APP_NAMESPACES=(
   "eks-ec2-appsignals"
   "eks-fargate-appsignals"
@@ -19,6 +21,26 @@ NEW_RELIC_NAMESPACES=(
   "eks-ec2-newrelic"
   "eks-fargate-newrelic"
 )
+
+echo "==> Updating kubeconfig for ${CLUSTER_NAME}..."
+if ! aws eks describe-cluster \
+  --name "${CLUSTER_NAME}" \
+  --region "${AWS_REGION}" >/dev/null 2>&1; then
+  echo "  [ERROR] EKS cluster '${CLUSTER_NAME}' was not found in ${AWS_REGION}."
+  echo "  Run 'make up' first, or check AWS_REGION / CLUSTER_NAME in .env."
+  exit 1
+fi
+
+aws eks update-kubeconfig \
+  --region "${AWS_REGION}" \
+  --name "${CLUSTER_NAME}" >/dev/null
+
+if ! kubectl get namespace default >/dev/null 2>&1; then
+  echo "  [ERROR] kubectl cannot reach the EKS API server after kubeconfig update."
+  echo "  Current context: $(kubectl config current-context 2>/dev/null || echo '(none)')"
+  echo "  Check network/DNS access to the EKS endpoint and AWS credentials."
+  exit 1
+fi
 
 echo "==> Creating application namespaces..."
 for ns in "${APP_NAMESPACES[@]}" newrelic; do

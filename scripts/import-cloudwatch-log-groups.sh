@@ -15,6 +15,7 @@ log_groups=(
   "aws_cloudwatch_log_group.app_fargate|/obs-poc/eks-fargate-appsignals/application"
   "aws_cloudwatch_log_group.fluent_bit|/aws/eks/${CLUSTER_NAME}/fluent-bit"
   "aws_cloudwatch_log_group.synthetics|/aws/synthetics/${CLUSTER_NAME}-canary"
+  "aws_cloudwatch_log_group.application_signals_data|/aws/application-signals/data"
 )
 
 state_list="$(terraform -chdir="${TF_DIR}" state list 2>/dev/null || true)"

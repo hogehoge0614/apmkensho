@@ -64,6 +64,33 @@ aws logs describe-log-groups \
   --query "logGroups[].logGroupName" \
   --output table 2>/dev/null
 
+aws logs describe-log-groups \
+  --region "${AWS_REGION}" \
+  --log-group-name-prefix "/aws/application-signals" \
+  --query "logGroups[].logGroupName" \
+  --output table 2>/dev/null
+
+echo ""
+echo "=== CloudWatch Alarms (obs-poc) ==="
+aws cloudwatch describe-alarms \
+  --region "${AWS_REGION}" \
+  --query "MetricAlarms[?contains(AlarmName, '${CLUSTER_NAME}') || contains(AlarmName, 'obs-poc') || contains(AlarmName, 'device-api-slow-query-custom')].AlarmName" \
+  --output table 2>/dev/null || echo "  Cannot query"
+
+echo ""
+echo "=== CloudWatch Dashboards (obs-poc) ==="
+aws cloudwatch list-dashboards \
+  --region "${AWS_REGION}" \
+  --query "DashboardEntries[?contains(DashboardName, '${CLUSTER_NAME}') || contains(DashboardName, 'obs-poc')].DashboardName" \
+  --output table 2>/dev/null || echo "  Cannot query"
+
+echo ""
+echo "=== CloudWatch Metric Streams (obs-poc) ==="
+aws cloudwatch list-metric-streams \
+  --region "${AWS_REGION}" \
+  --query "Entries[?contains(Name, '${CLUSTER_NAME}') || contains(Name, 'obs-poc')].Name" \
+  --output table 2>/dev/null || echo "  Cannot query"
+
 echo ""
 echo "=== CloudWatch Synthetics Canaries ==="
 aws synthetics describe-canaries \
@@ -103,6 +130,11 @@ echo "   aws ecr delete-repository --force --repository-name obs-poc/<svc>"
 echo "   aws s3 rb s3://<bucket-name> --force"
 echo "   aws logs delete-log-group --log-group-name /obs-poc/..."
 echo "   aws logs delete-log-group --log-group-name /aws/containerinsights/${CLUSTER_NAME}/..."
+echo "   aws logs delete-log-group --log-group-name /aws/application-signals/data"
+echo ""
+echo " CloudWatch metric datapoints and X-Ray traces cannot be immediately purged"
+echo " by a general delete API. They stop updating after producers/log groups are"
+echo " deleted and age out according to AWS retention."
 echo ""
 echo " Or re-run: cd infra/terraform && terraform destroy -auto-approve"
 echo "======================================================"

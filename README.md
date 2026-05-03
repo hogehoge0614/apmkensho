@@ -89,17 +89,17 @@ make build-push
 | Fargate + New Relic | `eks-fargate-newrelic` | APM only 環境の制約確認（任意） |
 | 比較 | 全環境 | [environment-comparison.md](docs/environment-comparison.md) の機能差マトリクス |
 
-### カオスシナリオ（各環境共通）
+### 障害対応シナリオ（各環境共通）
 
-各環境で同一のシナリオを実行し、ツールごとの見え方の差を比較します。
+各環境で同一のシナリオを実行し、最初にアラートや異常メトリクスで気づき、APM で影響範囲と原因サービスを特定する流れを比較します。`make load-*` は負荷テストそのものではなく、障害調査に必要なトランザクションデータを発生させるための操作です。
 
-| シナリオ | `/chaos` 画面で操作 | `make` コマンド | 主な確認観点 |
-|---------|------------------|----------------|------------|
-| 正常系 | — | `make load` | サービスマップ・レイテンシ・エラー率の基準値 |
-| Slow Query | Slow Query ON (3000ms) | `make load-slow` | device-api の DB スパン遅延、P99 の悪化 |
-| Error Inject | Error Inject ON (30%) | `make load-error` | エラー伝播、Fault rate の連鎖 |
-| Alert Storm | Alert Storm ON | `make load-storm` | alert-api スループット急増、ログ量増加 |
-| 障害対応ドリル | — | — | [docs/runbook.md](docs/runbook.md) の Tier1/2/3 フロー |
+| シナリオ | 最初の検知 | `make` コマンド | APM で特定したいこと |
+|---------|------------|----------------|----------------------|
+| 正常系 | アラートなし | `make load` | サービスマップ・レイテンシ・エラー率の基準値 |
+| Slow Query | レイテンシ閾値超過 / SLO 悪化 | `make load-slow` | `device-api` の DB 処理が遅く、上流の `netwatch-ui` に影響していること |
+| Error Inject | 5xx エラー率閾値超過 / エラーログ増加 | `make load-error` | エラー発生源が `device-api` で、`netwatch-ui` は下流エラーを受けていること |
+| Alert Storm | リクエスト数・ログ量・CPU の急増 | `make load-storm` | 急増の中心が `alert-api` で、影響が `/alerts` 系に限定されるかどうか |
+| 障害対応ドリル | Canary / Alarm / NR Alert | — | [docs/runbook.md](docs/runbook.md) の Tier1/2/3 フロー |
 
 ---
 

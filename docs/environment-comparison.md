@@ -36,7 +36,7 @@ Pod (FastAPI)
   → X-Ray / App Signals（VPC Endpoint 経由、インターネット不要）
 ```
 
-- **Auto-instrumentation**: `instrumentation.opentelemetry.io/inject-python: "appsignals-fargate"` で namespace 内の Instrumentation CR を参照
+- **Auto-instrumentation**: `instrumentation.opentelemetry.io/inject-python: "true"` で注入し、namespace 内の Instrumentation CR で送信先 Collector と sampler を指定
 - **エージェント**: DaemonSet 不可 → **ADOT Collector を Deployment として namespace 内に配置**（EC2 DaemonSet と完全に独立）
 - **ログ**: Fargate 組み込み Fluent Bit（`aws-observability` ConfigMap）→ CloudWatch Logs
 - **StatsD**: DaemonSet がないため未対応
@@ -115,6 +115,19 @@ CloudWatch App Signals は AWS VPC Endpoint を活用し **インターネット
 | **Apdex** | なし | あり（0–1スコア） |
 | **アラート柔軟性** | メトリクスアラーム（ディメンション固定） | NRQL で任意条件を直接アラート化 |
 | **コスト構造** | AWS 従量課金 | NR サブスクリプション |
+
+---
+
+## アラート起点の障害調査で比較する観点
+
+この PoC の `make load-*` は、性能試験ではなく APM 調査に必要なトランザクションデータを発生させるための操作として扱う。ハンズオンでは、最初にエラーメッセージ、ログ件数、レイテンシ、エラー率、スループットなどのアラートで異常を検知し、その後 APM で「どの API / サービスが原因で、どの画面や上流サービスに影響しているか」を特定する。
+
+| 構成 | 影響範囲特定 | 根本原因の特定 | ハンズオンで確認する制約 |
+|------|--------------|----------------|--------------------------|
+| EC2 + App Signals | Service Map / Services / X-Ray で可能 | X-Ray + CloudWatch Logs + Container Insights で裏取り | エラーの自動グルーピングや遅いトランザクションの自動抽出は弱く、手動フィルタが多い |
+| Fargate + App Signals | EC2 と同様に Application Signals で可能 | X-Ray + Fargate Logs + Pod メトリクスで裏取り | DaemonSet / StatsD / ノードメトリクスが使えず、APM 中心の切り分けになる |
+| EC2 + New Relic | Service Map / APM Summary / Distributed Tracing で可能 | Errors Inbox / Transaction Traces / Logs in Context / Kubernetes Explorer で裏取り | アラートからエラーグループ、代表 trace、関連ログまでの導線が短い |
+| Fargate + New Relic | APM / Service Map / Errors Inbox で可能 | Transaction Traces と `kubectl logs` または CloudWatch 側ログで裏取り | NR Infrastructure / NR Logs がないため、APM 外に移る調査が増える |
 
 ---
 

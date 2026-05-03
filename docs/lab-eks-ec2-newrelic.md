@@ -38,7 +38,7 @@
 6. [ログ（NR Logs + Logs in Context）](#6-ログnr-logs--logs-in-context)
 7. [NR Browser（ブラウザ監視）](#7-nr-browserブラウザ監視)
 8. [カスタムメトリクス（NR Flex）](#8-カスタムメトリクスnr-flex)
-9. [負荷テストガイド](#9-負荷テストガイド)
+9. [トランザクションデータ生成](#9-トランザクションデータ生成)
 10. [設計チェックリスト](#10-設計チェックリスト)
 11. [NR Alerts / Service Levels 設計イメージ](#11-nr-alerts--service-levels-設計イメージ)
 
@@ -158,6 +158,18 @@ curl -s "${EC2_NR_BASE}/api/chaos/state" | python3 -m json.tool
 | **Error Inject** | APM > device-api > Error rate | 設定確率に比例して上昇 |
 | **Alert Storm** | APM > alert-api > Throughput | 急激なスパイク |
 | **Alert Storm** | NR Logs | alert_storm ログのボリューム急増 |
+
+### アラート起点の調査シナリオ
+
+このハンズオンでは、`make load-*` を「負荷テスト」ではなく、障害発生時のトランザクションデータを再現する操作として扱う。運用者は最初に NR Alerts、Synthetics、ログのエラーメッセージ、または APM メトリクスの閾値超過で異常を検知し、その後 New Relic APM で影響範囲と原因を絞り込む。
+
+| シナリオ | 最初の検知 | New Relic APM で見る順序 | 判断したいこと |
+|---------|------------|---------------------------|----------------|
+| **Slow Query** | Response time / Apdex / Service Level の悪化 | APM Services で `device-api` と `netwatch-ui` の Response time を確認 → Service Map で呼び出し経路を確認 → `device-api` の Transaction Traces / Databases を開く → 遅い DB 処理を含む trace を確認 | ユーザー影響は `/devices` 系。根本原因候補は `device-api` の DB 処理遅延。Transaction Traces により遅いトランザクションを自動的に候補化できる。 |
+| **Error Inject** | Error rate 閾値超過、Errors Inbox の新規グループ、HTTP 500 ログ増加 | Errors Inbox で新規エラーグループを確認 → Occurrences から代表 trace を開く → Distributed Tracing で最初にエラー化した span を確認 → Logs in Context で該当ログを確認 | 起点は `device-api`。`netwatch-ui` のエラーは下流エラーの伝播。Errors Inbox により同種エラーの件数、初回発生、影響度をまとめて把握できる。 |
+| **Alert Storm** | `alert-api` Throughput / ログ量 / Pod CPU の急増 | APM > `alert-api` で Throughput スパイクを確認 → Service Map で `/alerts` 経路の影響を確認 → NR Logs で `alert_storm` を検索 → Kubernetes Explorer で Pod CPU/Memory を確認 | 起点は `alert-api`。影響が `/alerts` 系に閉じているか、他サービスへ波及しているかを Service Map と Logs in Context で確認する。 |
+
+EC2 + New Relic では APM、Errors Inbox、Transaction Traces、Logs in Context、Kubernetes Explorer を一続きで使えるため、アラートから原因 API / 原因サービスまでの導線が最も短い。CloudWatch App Signals と比べると、エラーの自動グルーピングと遅いトランザクションの自動抽出を重点的に確認する。
 
 ---
 
@@ -639,23 +651,25 @@ SINCE 30 minutes ago TIMESERIES 1 minute
 
 ---
 
-## 9. 負荷テストガイド
+## 9. トランザクションデータ生成
+
+`scripts/load.sh` はベンチマーク目的の負荷テストではなく、APM に調査対象のトレース、エラー、レイテンシ、スループット変化を記録させるための補助スクリプトです。
 
 ### 使い方
 
 ```bash
 source .env   # EC2_NR_BASE を読み込む
 
-# NR 環境のみに負荷をかける
+# NR 環境のみにトランザクションを送る
 EC2_AS_BASE="" FARGATE_AS_BASE="" ./scripts/load.sh normal-device-detail
 
-# 全環境に同時に負荷をかける（CW と NR を並行して比較）
+# 全環境に同時送信する（CW と NR を並行して比較）
 make load
 ```
 
 ### NRQL でリアルタイム確認
 
-負荷生成中に以下のクエリを NR に貼り付けると、リアルタイムで変化を確認できる:
+トランザクション生成中に以下のクエリを NR に貼り付けると、リアルタイムで変化を確認できる:
 
 ```sql
 -- 4サービスのスループット推移

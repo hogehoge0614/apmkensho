@@ -23,7 +23,7 @@ SCRIPTS_DIR := scripts
 
 .PHONY: help \
         check-prereq aws-whoami kube-context \
-        up cleanup-stale-cloudwatch-logs import-cloudwatch-log-groups build-push create-secrets \
+        up cleanup-stale-cloudwatch-logs cleanup-observability-data import-cloudwatch-log-groups build-push create-secrets \
         ec2-appsignals-deploy ec2-appsignals-verify ec2-appsignals-down \
         ec2-appsignals-enable-rum ec2-appsignals-enable-custom-metrics \
         fargate-appsignals-deploy fargate-appsignals-verify fargate-appsignals-down \
@@ -153,6 +153,9 @@ cleanup-stale-cloudwatch-logs:
 	@echo "==> Cleaning stale CloudWatch Log Groups from previous runs..."
 	@$(SCRIPTS_DIR)/cleanup-stale-cloudwatch-logs.sh
 
+cleanup-observability-data:
+	@$(SCRIPTS_DIR)/cleanup-observability-data.sh all
+
 import-cloudwatch-log-groups:
 	@echo "==> Importing pre-existing CloudWatch Log Groups into Terraform state..."
 	@TF_DIR=$(TF_DIR) $(SCRIPTS_DIR)/import-cloudwatch-log-groups.sh
@@ -214,6 +217,7 @@ ec2-appsignals-enable-custom-metrics:
 ec2-appsignals-down:
 	@echo "==> Deleting eks-ec2-appsignals namespace..."
 	@kubectl delete namespace eks-ec2-appsignals --timeout=120s 2>/dev/null || true
+	@$(SCRIPTS_DIR)/cleanup-observability-data.sh ec2-appsignals
 	@echo "Done."
 
 # ============================================================
@@ -237,6 +241,7 @@ fargate-appsignals-enable-rum:
 fargate-appsignals-down:
 	@echo "==> Deleting eks-fargate-appsignals namespace..."
 	@kubectl delete namespace eks-fargate-appsignals --timeout=120s 2>/dev/null || true
+	@$(SCRIPTS_DIR)/cleanup-observability-data.sh fargate-appsignals
 	@echo "Done."
 
 # ============================================================
@@ -260,6 +265,7 @@ ec2-newrelic-verify:
 ec2-newrelic-down:
 	@echo "==> Deleting eks-ec2-newrelic namespace..."
 	@kubectl delete namespace eks-ec2-newrelic --timeout=120s 2>/dev/null || true
+	@$(SCRIPTS_DIR)/cleanup-observability-data.sh ec2-newrelic
 	@echo "Done."
 
 # ============================================================
@@ -284,6 +290,7 @@ fargate-newrelic-verify:
 fargate-newrelic-down:
 	@echo "==> Deleting eks-fargate-newrelic namespace..."
 	@kubectl delete namespace eks-fargate-newrelic --timeout=120s 2>/dev/null || true
+	@$(SCRIPTS_DIR)/cleanup-observability-data.sh fargate-newrelic
 	@echo "Done."
 
 # ============================================================
@@ -344,16 +351,16 @@ down:
 	@echo "======================================================"
 	@echo ""
 
-	@echo "==> [1/5] Stopping CloudWatch Synthetics canaries..."
+	@echo "==> [1/6] Stopping CloudWatch Synthetics canaries..."
 	@aws synthetics stop-canary --name $(CLUSTER_NAME)-health-check \
 		--region $(AWS_REGION) 2>/dev/null || true
 
 	@echo ""
-	@echo "==> [2/5] Removing Helm releases..."
+	@echo "==> [2/6] Removing Helm releases..."
 	@helm uninstall nri-bundle -n newrelic 2>/dev/null || true
 
 	@echo ""
-	@echo "==> [3/5] Deleting Kubernetes namespaces (triggers ELB deletion)..."
+	@echo "==> [3/6] Deleting Kubernetes namespaces (triggers ELB deletion)..."
 	@kubectl delete namespace eks-ec2-appsignals     --timeout=30s 2>/dev/null || true
 	@kubectl delete namespace eks-fargate-appsignals --timeout=30s 2>/dev/null || true
 	@kubectl delete namespace eks-ec2-newrelic        --timeout=30s 2>/dev/null || true
@@ -366,7 +373,7 @@ down:
 	done
 
 	@echo ""
-	@echo "==> [4/5] Running Terraform destroy..."
+	@echo "==> [4/6] Running Terraform destroy..."
 	@cd $(TF_DIR) && terraform destroy -auto-approve \
 		-var="cluster_name=$(CLUSTER_NAME)" \
 		-var="new_relic_license_key=$(NEW_RELIC_LICENSE_KEY)" \
@@ -374,7 +381,11 @@ down:
 		2>/dev/null || echo "  Terraform destroy completed with some errors - check manually"
 
 	@echo ""
-	@echo "==> [5/6] Cleaning stale CloudWatch Log Groups..."
+	@echo "==> [5/6] Cleaning CloudWatch observability data..."
+	@$(SCRIPTS_DIR)/cleanup-observability-data.sh all
+
+	@echo ""
+	@echo "==> [5b/6] Cleaning stale CloudWatch Log Groups..."
 	@$(SCRIPTS_DIR)/cleanup-stale-cloudwatch-logs.sh
 
 	@echo ""

@@ -15,6 +15,12 @@ NS="eks-ec2-newrelic"
 APP_SIGNALS_EC2_ROLE_ARN=$(cd "${ROOT_DIR}/infra/terraform" && terraform output -raw app_signals_ec2_role_arn 2>/dev/null || echo "")
 APP_SIGNALS_FARGATE_ROLE_ARN=$(cd "${ROOT_DIR}/infra/terraform" && terraform output -raw app_signals_fargate_role_arn 2>/dev/null || echo "")
 
+if ! kubectl get crd instrumentations.newrelic.com >/dev/null 2>&1; then
+  echo "[ERROR] New Relic Instrumentation CRD is not installed."
+  echo "Run 'make install-newrelic-full' first, then re-run 'make ec2-newrelic-deploy'."
+  exit 1
+fi
+
 echo "==> Creating namespaces and ServiceAccounts..."
 sed \
   -e "s|\${APP_SIGNALS_EC2_ROLE_ARN}|${APP_SIGNALS_EC2_ROLE_ARN}|g" \

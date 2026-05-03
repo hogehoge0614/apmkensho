@@ -31,7 +31,7 @@
 5. [シナリオ別 確認ガイド（詳細）](#5-シナリオ別-確認ガイド詳細)
 6. [CloudWatch Synthetics 外形監視](#6-cloudwatch-synthetics-外形監視)
 7. [CloudWatch RUM 検証手順（Fargate 版）](#7-cloudwatch-rum-検証手順fargate-版)
-8. [負荷テストガイド](#8-負荷テストガイド)
+8. [トランザクションデータ生成](#8-トランザクションデータ生成)
 9. [設計チェックリスト](#9-設計チェックリスト)
 10. [Alarm / SLO 設計イメージ](#10-alarm--slo-設計イメージ)
 
@@ -100,7 +100,7 @@ curl -X POST "${FARGATE_AS_BASE}/api/chaos/alert-storm?enable=true"
 curl -X POST "${FARGATE_AS_BASE}/api/chaos/reset"
 
 # ⑤ EC2 環境との比較（両方が稼働中の場合）
-make load   # 全環境に同時に負荷をかけてメトリクスを比較
+make load   # 全環境に同時送信して APM の見え方を比較
 ```
 
 ---
@@ -135,6 +135,18 @@ curl -s "${FARGATE_AS_BASE}/api/chaos/state" | python3 -m json.tool
 ```
 
 > ブラウザから操作する場合は `${FARGATE_AS_BASE}/chaos` のカオスコントロール画面を使用してください。
+
+### アラート起点の調査シナリオ
+
+このハンズオンでは、`make load-*` を「負荷テスト」ではなく、障害発生時のトランザクションデータを再現する操作として扱う。運用者は最初に CloudWatch Alarm、Synthetics、ログのエラーメッセージで異常を検知し、その後 Application Signals / X-Ray / Logs で影響範囲と原因を絞り込む。
+
+| シナリオ | 最初の検知 | Application Signals / X-Ray で見る順序 | 判断したいこと |
+|---------|------------|------------------------------------------|----------------|
+| **Slow Query** | `device-api` または `netwatch-ui` の Latency P99 閾値超過、SLO 悪化 | Services で Environment `eks-fargate-appsignals` に絞る → Service Map で `netwatch-ui -> device-api` の依存を確認 → X-Ray で遅い Trace を開く → `device-api` 内の DB span と Logs の `slow_query` を確認 | ユーザー影響は `/devices` 系。根本原因候補は `device-api` の DB 処理遅延で、`netwatch-ui` は待たされている側。 |
+| **Error Inject** | 5xx エラー率閾値超過、ERROR ログ増加、Canary FAIL | Services で Fault rate 上昇を確認 → Service Map で赤いノード/エッジを確認 → X-Ray の fault trace で最初に 500 を返した span を確認 → Fargate ログで `error_injected` を確認 | 起点は `device-api`。`netwatch-ui` のエラーは下流エラーの伝播であり、影響範囲は device API を使う画面。 |
+| **Alert Storm** | `alert-api` RequestCount / Throughput / ログ量の急増 | Services で `alert-api` の Throughput を確認 → Service Map で `/alerts` 系の経路を確認 → Logs で `alert_storm_started` とログ件数を確認 → Container Insights の Pod メトリクスを確認 | 起点は `alert-api`。`/alerts` 画面への影響が中心で、機器一覧系への波及があるかを APM の経路で確認する。 |
+
+Fargate + App Signals では DaemonSet やノード視点の確認が限定されるため、影響範囲と原因サービスの特定は Application Signals が中心になる。Pod メトリクスと Fargate ログで裏取りはできるが、StatsD やノード単位の切り分けは EC2 構成ほどできない。
 
 ---
 
@@ -180,7 +192,10 @@ https://ap-northeast-1.console.aws.amazon.com/cloudwatch/home?region=ap-northeas
 
 ### 3-3. Operation別 Latency（P50 / P90 / P99）
 
-EC2 環境と同じ手順で確認。Environment フィルタを `eks-fargate-appsignals` に変更する。
+1. Services → `device-api` → Operations タブを開く
+2. Environment が `eks-fargate-appsignals` であることを確認する
+3. `GET /devices/{device_id}` 行をクリックする
+4. Latency グラフで P50 / P90 / P99 を確認する
 
 **正常時の目安（Fargate）:**
 
@@ -196,19 +211,69 @@ EC2 環境と同じ手順で確認。Environment フィルタを `eks-fargate-ap
 
 ### 3-4. Trace 一覧・3ホップトレースの確認
 
-EC2 環境と同じ手順で確認できる。OTel Operator による auto-instrumentation は Fargate でも同様に動作する。
+**コンソール URL:**  
+https://ap-northeast-1.console.aws.amazon.com/cloudwatch/home?region=ap-northeast-1#xray:traces/query
 
 ```
-フィルタ例（Fargate 環境のトレースのみ）:
+# Fargate 環境の netwatch-ui 起点トレース
 service("netwatch-ui") AND annotation.environment = "eks-fargate-appsignals"
+
+# device-api のエラートレース
+service("device-api") AND fault = true
+
+# 遅いトレース（2秒以上）
+service("device-api") AND duration > 2
 ```
+
+1. `./scripts/load.sh normal-device-detail` を実行してトレースを生成する
+2. `GET /devices/<device_id>` のトレースを開く
+3. `netwatch-ui -> device-api -> metrics-collector` と `netwatch-ui -> alert-api` の span を確認する
+4. Slow Query 時は `device-api` の DB 処理を含む span が長くなり、`metrics-collector` span は短いままであることを確認する
 
 ---
 
 ### 3-5. Slow Query / Error Inject / Alert Storm 時の見え方
 
-EC2 環境（[lab-eks-ec2-appsignals.md](lab-eks-ec2-appsignals.md) のセクション 3-8〜3-10）と同様。  
-URL を `EC2_AS_BASE` → `FARGATE_AS_BASE` に読み替えて実行する。
+**Slow Query:**
+
+```bash
+source .env
+curl -X POST "${FARGATE_AS_BASE}/api/chaos/slow-query?enable=true&duration_ms=5000"
+./scripts/load.sh slow-query-devices
+curl -X POST "${FARGATE_AS_BASE}/api/chaos/reset"
+```
+
+確認ポイント:
+- `device-api` の `GET /devices` / `GET /devices/{device_id}` の P99 Latency が 5000ms 以上になる
+- `netwatch-ui` 側のレイテンシも上昇する
+- Trace Map では `device-api` span が長くなり、`metrics-collector` span は短いままになる
+
+**Error Inject:**
+
+```bash
+source .env
+curl -X POST "${FARGATE_AS_BASE}/api/chaos/error-inject?rate=30"
+./scripts/load.sh error-inject-devices
+curl -X POST "${FARGATE_AS_BASE}/api/chaos/reset"
+```
+
+確認ポイント:
+- `device-api` の Fault rate が約 30% まで上がる
+- `netwatch-ui` の Fault rate も下流エラーに連動して上がる
+- X-Ray Traces で `service("device-api") AND fault = true` を検索し、`HTTP 500` の span を確認する
+
+**Alert Storm:**
+
+```bash
+source .env
+curl -X POST "${FARGATE_AS_BASE}/api/chaos/alert-storm?enable=true"
+./scripts/load.sh alert-storm-alerts
+curl -X POST "${FARGATE_AS_BASE}/api/chaos/reset"
+```
+
+確認ポイント:
+- `alert-api` の Request count / Throughput が短時間で急増する
+- `netwatch-ui` のアラート一覧操作にもリクエスト増加が反映される
 
 ---
 
@@ -283,12 +348,7 @@ fields @timestamp, @message, @logStream
 
 ## 5. シナリオ別 確認ガイド（詳細）
 
-操作手順は EC2 環境（[lab-eks-ec2-appsignals.md](lab-eks-ec2-appsignals.md) のセクション 5）と同一。  
-以下の点を読み替えて実行する:
-
-- `EC2_AS_BASE` → `FARGATE_AS_BASE`
-- Namespace `eks-ec2-appsignals` → `eks-fargate-appsignals`
-- ポート `8080` → `8081`
+このセクションは Fargate + App Signals 環境だけで完結する確認手順です。
 
 ### 5-1. 正常時のベースライン
 
@@ -359,7 +419,7 @@ kubectl get svc netwatch-ui -n eks-fargate-appsignals \
 
 ### 6-2. Canary 管理手順
 
-EC2 環境と同じ Canary を使用する（同じアプリが別 LoadBalancer で公開されているだけ）。
+Terraform で作成される既定の Canary は `${CLUSTER_NAME}-health-check` です。Fargate の LoadBalancer を監視する場合は、Terraform の `synthetics_canary_url` に `FARGATE_AS_BASE` を設定して反映します。
 
 ```bash
 aws synthetics start-canary --name obs-poc-health-check --region ap-northeast-1
@@ -371,7 +431,7 @@ aws synthetics start-canary --name obs-poc-health-check --region ap-northeast-1
 
 ### 6-3. Synthetics vs Application Signals
 
-EC2 環境と同じ構造。Slow Query は PASS だが Duration が悪化する点は Fargate でも同様に体験できる。
+Slow Query 中は Canary の成功/失敗だけでなく Duration を確認する。HTTP 200 のままでも Duration が悪化していれば、外形監視では「成功」、Application Signals では `device-api` の latency 悪化として見える。
 
 ---
 
@@ -393,8 +453,15 @@ make fargate-appsignals-enable-rum
 
 ### 7-2. 動作確認・検証シナリオ
 
-EC2 環境（[lab-eks-ec2-appsignals.md](lab-eks-ec2-appsignals.md) のセクション 7-2〜7-5）と同一。  
-ブラウザのアクセス先を `http://localhost:8081/rum-test` に変更する。
+```bash
+make port-forward-fargate
+```
+
+ブラウザで `http://localhost:8081/rum-test` を開き、CloudWatch RUM の App Monitor で以下を確認する。
+
+- Page load / Web vitals が記録される
+- HTTP telemetry に `netwatch-ui` へのリクエストが表示される
+- Errors タブにブラウザ側エラーが出ていない
 
 ---
 
@@ -408,17 +475,19 @@ User sessions タブでセッションを分類する方法:
 
 ---
 
-## 8. 負荷テストガイド
+## 8. トランザクションデータ生成
+
+`scripts/load.sh` はベンチマーク目的の負荷テストではなく、APM に調査対象のトレース、エラー、レイテンシ、スループット変化を記録させるための補助スクリプトです。
 
 ### 使い方
 
 ```bash
 source .env   # FARGATE_AS_BASE を読み込む
 
-# Fargate 環境のみに負荷をかける
+# Fargate 環境のみにトランザクションを送る
 EC2_AS_BASE="" ./scripts/load.sh normal-device-detail
 
-# EC2 と Fargate の両方に同時に負荷をかけて比較
+# EC2 と Fargate の両方に同時送信して比較
 make load
 ```
 

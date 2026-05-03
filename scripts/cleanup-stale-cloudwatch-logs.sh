@@ -32,6 +32,7 @@ log_groups=(
   "/aws/containerinsights/${CLUSTER_NAME}/dataplane"
   "/aws/containerinsights/${CLUSTER_NAME}/host"
   "/aws/synthetics/${CLUSTER_NAME}-canary"
+  "/aws/application-signals/data"
   "/obs-poc/eks-ec2-appsignals/application"
   "/obs-poc/eks-fargate-appsignals/application"
 )

@@ -18,7 +18,7 @@
 6. [CloudWatch Synthetics 外形監視](#6-cloudwatch-synthetics-外形監視)
 7. [CloudWatch RUM 検証手順](#7-cloudwatch-rum-検証手順)
 8. [カスタムメトリクス（StatsD）検証手順](#8-カスタムメトリクスstatsd検証手順)
-9. [負荷テストガイド（scripts/load.sh）](#9-負荷テストガイドscriptsloadsh)
+9. [トランザクションデータ生成（scripts/load.sh）](#9-トランザクションデータ生成scriptsloadsh)
 10. [設計チェックリスト](#10-設計チェックリスト)
 11. [Alarm / SLO 設計イメージ](#11-alarm--slo-設計イメージ)
 
@@ -172,6 +172,18 @@ curl -s "${EC2_AS_BASE}/api/chaos/state" | python3 -m json.tool
 | **Error Inject** | X-Ray > Traces > `fault = true` | エラー span（赤）の詳細で HTTP 500 を確認 |
 | **Alert Storm** | App Signals > alert-api > Throughput | 急激なスパイク（通常 < 1 req/s → Storm 中: ~3-5 req/s） |
 | **Alert Storm** | Logs Insights: `stats count(*) by bin(1m)` | ログ件数が Storm 中に急増 |
+
+### アラート起点の調査シナリオ
+
+このハンズオンでは、`make load-*` を「負荷テスト」ではなく、障害発生時のトランザクションデータを再現する操作として扱う。運用者は最初に CloudWatch Alarm、Synthetics、ログのエラーメッセージで異常を検知し、その後 Application Signals / X-Ray / Logs で影響範囲と原因を絞り込む。
+
+| シナリオ | 最初の検知 | Application Signals / X-Ray で見る順序 | 判断したいこと |
+|---------|------------|------------------------------------------|----------------|
+| **Slow Query** | `device-api` または `netwatch-ui` の Latency P99 閾値超過、SLO 悪化 | Services で Latency 悪化サービスを確認 → Service Map で `netwatch-ui -> device-api` の依存を確認 → X-Ray で遅い Trace を開く → `device-api` 内の DB span と Logs の `slow_query` を確認 | ユーザー影響は `/devices` 系。根本原因候補は `device-api` の DB 処理遅延で、`netwatch-ui` は待たされている側。 |
+| **Error Inject** | 5xx エラー率閾値超過、ERROR ログ増加、Canary FAIL | Services で Fault rate 上昇を確認 → Service Map で赤いノード/エッジを確認 → X-Ray の fault trace で最初に 500 を返した span を確認 → Logs で `error_injected` を確認 | 起点は `device-api`。`netwatch-ui` のエラーは下流エラーの伝播であり、影響範囲は device API を使う画面。 |
+| **Alert Storm** | `alert-api` RequestCount / Throughput / ログ量の急増、Pod CPU 上昇 | Services で `alert-api` の Throughput を確認 → Service Map で `/alerts` 系の経路を確認 → Logs で `alert_storm_started` とログ件数を確認 → Container Insights で Pod CPU/Memory を確認 | 起点は `alert-api`。`/alerts` 画面への影響が中心で、機器一覧系への波及があるかを APM の経路で確認する。 |
+
+EC2 + App Signals では APM、ログ、Container Insights、StatsD をまとめて使えるため、サービス影響範囲の特定から Pod/Node 側の裏取りまで同じ CloudWatch 側で進められる。一方、エラーの自動グルーピングや遅いトランザクションの自動抽出は New Relic より手作業が多い。
 
 ---
 
@@ -957,7 +969,9 @@ curl -X POST "${EC2_AS_BASE}/api/chaos/reset"
 
 ---
 
-## 9. 負荷テストガイド（scripts/load.sh）
+## 9. トランザクションデータ生成（scripts/load.sh）
+
+`scripts/load.sh` はベンチマーク目的の負荷テストではなく、APM に調査対象のトレース、エラー、レイテンシ、スループット変化を記録させるための補助スクリプトです。
 
 ### 使い方
 

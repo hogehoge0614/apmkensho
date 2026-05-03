@@ -17,7 +17,10 @@ spec:
         app: alert-api
         environment: eks-fargate-appsignals
       annotations:
-        instrumentation.opentelemetry.io/inject-python: "appsignals-fargate"
+        instrumentation.opentelemetry.io/inject-python: "true"
+        instrumentation.opentelemetry.io/inject-java: "false"
+        instrumentation.opentelemetry.io/inject-nodejs: "false"
+        instrumentation.opentelemetry.io/inject-dotnet: "false"
         prometheus.io/scrape: "true"
         prometheus.io/port: "8000"
     spec:
@@ -33,14 +36,6 @@ spec:
               value: "alert-api"
             - name: ENVIRONMENT
               value: "eks-fargate-appsignals"
-            - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: "http://adot-collector:4316"
-            - name: OTEL_LOGS_EXPORTER
-              value: "none"
-            - name: OTEL_SERVICE_NAME
-              value: "alert-api"
-            - name: OTEL_RESOURCE_ATTRIBUTES
-              value: "deployment.environment=eks-fargate-appsignals,k8s.namespace.name=eks-fargate-appsignals"
             - name: POD_NAME
               valueFrom:
                 fieldRef:
